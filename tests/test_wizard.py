@@ -59,13 +59,38 @@ def test_collect_xprinter_usb_uses_suggested_profile() -> None:
     )
     assert selection == WizardSelection(
         name="XPrinter-XP-80C",
-        description="Generic Xprinter-compatible 80 mm",
+        description="XPrinter-compatible 80 mm",
         profile="xprinter-80mm",
         connection="usb",
         device_uri="usb://XPrinter/XP-80C?serial=123456",
         driver="drv:///escpos.drv/gp80160.ppd",
         ppd=None,
     )
+
+
+def test_collect_xprinter_58_usb_uses_matching_profile() -> None:
+    command = ("lpinfo", "-v")
+    runner = FakeRunner(
+        {
+            command: CommandResult(
+                command,
+                0,
+                "direct usb://XPrinter/XP-58?serial=123456\n",
+            )
+        }
+    )
+    input_fn, _ = answers("1", "1", "", "")
+
+    selection = collect_printer(
+        runner,  # type: ignore[arg-type]
+        load_profiles(),
+        input_fn=input_fn,  # type: ignore[arg-type]
+        output=lambda _message: None,
+    )
+
+    assert selection is not None
+    assert selection.profile == "xprinter-58mm"
+    assert selection.driver == "drv:///escpos.drv/gp58130.ppd"
 
 
 def test_collect_bixolon_usb_uses_job_cut_profile() -> None:

@@ -19,6 +19,9 @@ def test_bundled_profiles_and_options() -> None:
         "escpos-generic-58mm",
         "escpos-generic-80mm",
         "generic-driverless",
+        "xprinter-58mm",
+        "xprinter-76mm",
+        "xprinter-80mm",
     } <= profiles.keys()
 
 

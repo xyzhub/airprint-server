@@ -1,0 +1,15 @@
+id: xprinter-58mm
+display_name: XPrinter-compatible 58 mm
+category: escpos
+status: unverified
+driver: drv:///escpos.drv/gp58130.ppd
+paper_width_mm: 58
+printable_width_mm: 48
+page_size: Custom.48x297mm
+resolution: 203dpi
+color_model: Gray
+monochrome: true
+cutter: false
+supported_connections: [socket, usb]
+cups_options:
+  print-color-mode: monochrome

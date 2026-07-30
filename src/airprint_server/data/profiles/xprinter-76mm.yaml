@@ -1,15 +1,15 @@
-id: xprinter-80mm
-display_name: XPrinter-compatible 80 mm
+id: xprinter-76mm
+display_name: XPrinter-compatible 76 mm
 category: escpos
 status: unverified
 driver: drv:///escpos.drv/gp80160.ppd
-paper_width_mm: 80
-printable_width_mm: 72
-page_size: w226h842
+paper_width_mm: 76
+printable_width_mm: 64
+page_size: Custom.64x297mm
 resolution: 203dpi
 color_model: Gray
 monochrome: true
-cutter: true
+cutter: false
 supported_connections: [socket, usb]
 cups_options:
   print-color-mode: monochrome

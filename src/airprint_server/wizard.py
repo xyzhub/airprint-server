@@ -269,7 +269,12 @@ def _recommended_profile(
     elif "swisspos" in device_text or "spst80" in device_text:
         preferred = "swisspos-t80c"
     elif "xprinter" in device_text or "xp-" in device_text:
-        preferred = "xprinter-80mm"
+        if "58" in device_text:
+            preferred = "xprinter-58mm"
+        elif "76" in device_text:
+            preferred = "xprinter-76mm"
+        else:
+            preferred = "xprinter-80mm"
     elif "58" in device_text:
         preferred = "escpos-generic-58mm"
     elif any(word in device_text for word in ("pos", "receipt", "thermal", "80c")):
