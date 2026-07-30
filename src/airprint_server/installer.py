@@ -35,6 +35,13 @@ RUNTIME_PACKAGES = [
 BUILD_PACKAGES = ["build-essential", "libcups2-dev", "cups-ppdc"]
 SUPPORTED_IDS = {"debian", "raspbian"}
 SUPPORTED_VERSIONS = {"12", "13"}
+INSTALL_PHASES = 7
+InstallProgress = Callable[[int, str], None]
+
+
+def _report(progress: InstallProgress | None, completed: int, label: str) -> None:
+    if progress is not None:
+        progress(completed, label)
 
 
 def require_root() -> None:
@@ -145,20 +152,34 @@ def install(
     *,
     install_escpos: bool = True,
     script_dir: Path | None = None,
+    progress: InstallProgress | None = None,
 ) -> None:
     require_root()
+    _report(progress, 0, "Checking host compatibility")
     supported, label = operating_system()
     if not supported:
         raise RuntimeError(
             f"unsupported operating system: {label}; "
             "expected Debian/Raspberry Pi OS 12 (Bookworm) or 13 (Trixie)"
         )
+    _report(progress, 1, "Installing system packages")
     install_packages(runner, state, with_build=False)
+    _report(progress, 2, "Preparing airprint-server configuration")
     if not runner.dry_run:
         initialize_config()
+    _report(progress, 3, "Starting CUPS and Avahi services")
     avahi.ensure_services(runner)
+    _report(progress, 4, "Configuring CUPS printer sharing")
     configure_cups(runner)
+    _report(
+        progress,
+        5,
+        "Checking ESC/POS printer driver"
+        if install_escpos
+        else "Skipping optional ESC/POS printer driver",
+    )
     if install_escpos and not rastertoescpos_available(runner):
+        _report(progress, 5, "Building ESC/POS printer driver")
         install_package_list(runner, state, BUILD_PACKAGES)
         had_filter, had_models = rastertoescpos_presence(runner)
         independently_present = had_filter or had_models
@@ -187,8 +208,10 @@ def install(
         if not independently_present:
             state.rastertoescpos_managed = True
             state.rastertoescpos_source = "https://github.com/chunlinyao/rastertoescpos"
+    _report(progress, 6, "Saving installation state")
     if not runner.dry_run:
         save_state(state)
+    _report(progress, INSTALL_PHASES, "Installation complete")
 
 
 def uninstall(

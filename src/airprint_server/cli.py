@@ -22,6 +22,7 @@ from airprint_server.config import (
 from airprint_server.diagnostics import diagnose, recent_logs
 from airprint_server.discovery import discover_network, discover_usb, select_usb
 from airprint_server.profiles import PrinterProfile, load_profiles
+from airprint_server.progress import ProgressBar
 from airprint_server.testprint import submit_cutter_test, submit_test
 from airprint_server.updater import update_project
 from airprint_server.validation import (
@@ -255,18 +256,20 @@ def _dispatch(args: argparse.Namespace) -> None:
     state = load_state()
     profiles = load_profiles(PROFILE_DIR)
     if args.command == "install":
-        installer.install(
-            runner,
-            state,
-            install_escpos=not args.without_escpos,
-            script_dir=Path(
-                os.environ.get(
-                    "AIRPRINT_SERVER_SOURCE_DIR", str(Path(__file__).resolve().parents[2])
+        animated = sys.stderr.isatty() and not args.dry_run and args.verbose == 0
+        with ProgressBar(installer.INSTALL_PHASES, interactive=animated) as progress:
+            installer.install(
+                runner,
+                state,
+                install_escpos=not args.without_escpos,
+                script_dir=Path(
+                    os.environ.get(
+                        "AIRPRINT_SERVER_SOURCE_DIR", str(Path(__file__).resolve().parents[2])
+                    )
                 )
+                / "scripts",
+                progress=progress.update,
             )
-            / "scripts",
-        )
-        print("Installation complete.")
         use_wizard = args.wizard is True or (args.wizard is None and sys.stdin.isatty())
         if use_wizard:
             cmd_setup(args, runner, state, profiles)

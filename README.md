@@ -44,6 +44,12 @@ cd airprint-server
 sudo ./install.sh
 ```
 
+Interactive installations show an animated progress bar tied to actual setup
+phases. The percentage advances only when a phase completes; the spinner keeps
+moving while package installation or driver compilation is running. When
+output is redirected, during a dry run, or with verbose logging enabled, the
+same progress is emitted as stable one-line phase messages instead.
+
 The installer creates an isolated runtime under `/opt/airprint-server`, exposes
 `/usr/local/bin/airprint-server`, installs only the required Debian packages,
 enables CUPS and Avahi, enables printer sharing without enabling remote CUPS

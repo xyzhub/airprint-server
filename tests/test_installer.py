@@ -6,7 +6,9 @@ from airprint_server.commands import CommandResult
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.installer import (
     BUILD_PACKAGES,
+    INSTALL_PHASES,
     RUNTIME_PACKAGES,
+    install,
     ipp_usb_state,
     operating_system,
     uninstall,
@@ -30,6 +32,32 @@ def test_ipp_usb_detection() -> None:
 def test_git_is_available_without_escpos_build_dependencies() -> None:
     assert "git" in RUNTIME_PACKAGES
     assert "git" not in BUILD_PACKAGES
+
+
+def test_install_reports_real_phases(monkeypatch: object, tmp_path: Path) -> None:
+    monkeypatch.setattr("airprint_server.installer.require_root", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "airprint_server.installer.operating_system",
+        lambda: (True, "Test Raspberry Pi OS"),
+    )  # type: ignore[attr-defined]
+    monkeypatch.setattr("airprint_server.installer.initialize_config", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr("airprint_server.installer.save_state", lambda _state: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "airprint_server.installer.rastertoescpos_available", lambda _runner: True
+    )  # type: ignore[attr-defined]
+    runner = FakeRunner(dry_run=False)
+    updates: list[tuple[int, str]] = []
+
+    install(
+        runner,  # type: ignore[arg-type]
+        State(),
+        script_dir=tmp_path,
+        progress=lambda completed, label: updates.append((completed, label)),
+    )
+
+    assert updates[0] == (0, "Checking host compatibility")
+    assert updates[-1] == (INSTALL_PHASES, "Installation complete")
+    assert [completed for completed, _label in updates] == list(range(INSTALL_PHASES + 1))
 
 
 def test_supported_bookworm_and_trixie(tmp_path: Path) -> None:
