@@ -26,6 +26,10 @@ def test_bixolon_profile_cuts_once_per_job() -> None:
     profile = load_profiles()["bixolon-srp-e300"]
     assert profile.status == "unverified"
     assert profile.cutter
+    assert profile.paper_width_mm == 80
+    assert profile.printable_width_mm == 72
+    assert profile.default_options()["PageSize"] == "Custom.72x297mm"
+    assert profile.default_options()["Resolution"] == "180dpi"
     assert profile.default_options()["escCutter"] == "1"
 
 

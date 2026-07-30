@@ -41,7 +41,20 @@ heat/density, raster output, feed, and cutter behavior on the exact firmware.
 
 ## BIXOLON SRP-E300
 
-The `bixolon-srp-e300` profile uses the rastertoescpos 80 mm model and sets:
+The SRP-E300 uses 79.5 mm roll paper but has a 72 mm print area at 180 dpi.
+The `bixolon-srp-e300` profile therefore uses a 72 mm custom CUPS page instead
+of rasterizing across the full roll width:
+
+```yaml
+page_size: Custom.72x297mm
+resolution: 180dpi
+```
+
+The rastertoescpos GP-80160II compatibility PPD supports both this custom media
+size and 180 dpi. Restricting the CUPS raster to the printer's actual print
+area prevents content on the right from being sent beyond the print head.
+
+The profile also sets:
 
 ```yaml
 cups_options:
@@ -60,8 +73,11 @@ hardware.
 For an existing queue, inspect and change the effective CUPS option with:
 
 ```sh
-lpoptions -p BIXOLON-SRP-E300 -l | grep escCutter
-sudo lpadmin -p BIXOLON-SRP-E300 -o escCutter=1
+lpoptions -p BIXOLON-SRP-E300 -l | grep -E 'PageSize|Resolution|escCutter'
+sudo lpadmin -p BIXOLON-SRP-E300 \
+  -o PageSize=Custom.72x297mm \
+  -o Resolution=180dpi \
+  -o escCutter=1
 ```
 
 The direct `lpadmin` command takes effect immediately. To keep

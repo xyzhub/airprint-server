@@ -5,8 +5,11 @@ status: unverified
 driver: drv:///escpos.drv/gp80160.ppd
 paper_width_mm: 80
 printable_width_mm: 72
-page_size: w226h842
-resolution: 203dpi
+# The SRP-E300 has a 72 mm, 180 dpi print area on 79.5 mm roll paper.
+# Constraining the raster width prevents the GP-80160II compatibility
+# driver from sending an approximately 80 mm image that is clipped at right.
+page_size: Custom.72x297mm
+resolution: 180dpi
 color_model: Gray
 monochrome: true
 cutter: true
@@ -14,4 +17,3 @@ supported_connections: [socket, usb]
 cups_options:
   print-color-mode: monochrome
   escCutter: "1"
-
