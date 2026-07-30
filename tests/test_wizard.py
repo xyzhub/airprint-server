@@ -197,3 +197,7 @@ def test_install_wizard_mode_defaults() -> None:
         ["install-bixolon-driver", "/tmp/bixolon.tgz"]
     ).archive == Path("/tmp/bixolon.tgz")
     assert parser.parse_args(["install-bixolon-driver"]).archive is None
+    assert parser.parse_args(["install-xprinter-driver"]).package is None
+    assert parser.parse_args(
+        ["install-xprinter-driver", "/tmp/xprinter.deb"]
+    ).package == Path("/tmp/xprinter.deb")

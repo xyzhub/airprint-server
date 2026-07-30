@@ -42,8 +42,20 @@ from airprint_server.validation import (
     socket_uri,
 )
 from airprint_server.wizard import WizardSelection, run_wizard
+from airprint_server.xprinter_driver import (
+    XPRINTER_CUPS_OPTIONS,
+    XPrinterInstallation,
+    download_xprinter_package,
+    install_xprinter_driver,
+    installed_xprinter_ppd,
+)
 
 LOG = logging.getLogger("airprint-server")
+XPRINTER_PROFILE_MODELS = {
+    "xprinter-58mm": "58",
+    "xprinter-76mm": "76",
+    "xprinter-80mm": "80",
+}
 
 
 def _root() -> None:
@@ -72,6 +84,25 @@ def _install_bixolon_source(
             installed = install_bixolon_driver(runner, state, downloaded)
     if not runner.dry_run:
         save_state(state)
+    return installed
+
+
+def _install_xprinter_source(
+    runner: Runner,
+    state: State,
+    package: Path | None,
+) -> XPrinterInstallation | None:
+    if runner.dry_run:
+        print("Would download if needed and verify XPrinter POS CUPS driver v3.13.11.")
+        return None
+    if package is not None:
+        installed = install_xprinter_driver(runner, state, package)
+    else:
+        print("Downloading the official XPrinter POS CUPS driver...")
+        with tempfile.TemporaryDirectory(prefix="airprint-server-xprinter-") as temporary:
+            downloaded = download_xprinter_package(Path(temporary))
+            installed = install_xprinter_driver(runner, state, downloaded)
+    save_state(state)
     return installed
 
 
@@ -128,11 +159,11 @@ def cmd_add(
         raise ValidationError(
             f"CUPS queue {name!r} already exists and is unmanaged; use adopt-printer first"
         )
-    official_ppd = installed_bixolon_ppd(state)
+    official_bixolon_ppd = installed_bixolon_ppd(state)
     can_use_automatic_bixolon = bool(
         selected
         and selected.id == "bixolon-srp-e300"
-        and not official_ppd
+        and not official_bixolon_ppd
         and not args.ppd
         and (not args.driver or args.driver == selected.driver)
     )
@@ -142,24 +173,57 @@ def cmd_add(
     ):
         installed = _install_bixolon_source(runner, state, None)
         if installed:
-            official_ppd = installed.ppd_path
+            official_bixolon_ppd = installed.ppd_path
     use_official_bixolon = bool(
         selected
         and selected.id == "bixolon-srp-e300"
-        and official_ppd
+        and official_bixolon_ppd
         and (not args.driver or args.driver == selected.driver)
-        and (not args.ppd or Path(args.ppd) == official_ppd)
+        and (not args.ppd or Path(args.ppd) == official_bixolon_ppd)
     )
-    ppd_source = args.ppd or (str(official_ppd) if use_official_bixolon else None)
+    xprinter_model = XPRINTER_PROFILE_MODELS.get(selected.id) if selected else None
+    official_xprinter_ppd = (
+        installed_xprinter_ppd(state, xprinter_model) if xprinter_model else None
+    )
+    can_use_automatic_xprinter = bool(
+        selected
+        and xprinter_model
+        and not official_xprinter_ppd
+        and not args.ppd
+        and (not args.driver or args.driver == selected.driver)
+    )
+    if can_use_automatic_xprinter and _confirm(
+        "Download and install XPrinter's official driver under its license?",
+        args.yes,
+    ):
+        installed_xprinter = _install_xprinter_source(runner, state, None)
+        if installed_xprinter and xprinter_model:
+            official_xprinter_ppd = installed_xprinter.ppd_paths[xprinter_model]
+    use_official_xprinter = bool(
+        selected
+        and xprinter_model
+        and official_xprinter_ppd
+        and (not args.driver or args.driver == selected.driver)
+        and (not args.ppd or Path(args.ppd) == official_xprinter_ppd)
+    )
+    ppd_source = args.ppd or (
+        str(official_bixolon_ppd)
+        if use_official_bixolon
+        else str(official_xprinter_ppd)
+        if use_official_xprinter
+        else None
+    )
     ppd = str(readable_ppd(ppd_source)) if ppd_source else None
     driver = (
         None
-        if use_official_bixolon
+        if use_official_bixolon or use_official_xprinter
         else args.driver or (None if ppd else selected.driver if selected else None)
     )
     options = (
         dict(BIXOLON_CUPS_OPTIONS)
         if use_official_bixolon
+        else dict(XPRINTER_CUPS_OPTIONS[xprinter_model])
+        if use_official_xprinter and xprinter_model
         else selected.default_options()
         if selected
         else {}
@@ -235,8 +299,14 @@ def cmd_setup(
         )
         cmd_add(add_args, runner, state, profiles)
 
+    preferred_ppds: dict[str, Path] = {}
     official_ppd = installed_bixolon_ppd(state)
-    preferred_ppds = {"bixolon-srp-e300": official_ppd} if official_ppd else None
+    if official_ppd:
+        preferred_ppds["bixolon-srp-e300"] = official_ppd
+    for profile_id, model in XPRINTER_PROFILE_MODELS.items():
+        xprinter_ppd = installed_xprinter_ppd(state, model)
+        if xprinter_ppd:
+            preferred_ppds[profile_id] = xprinter_ppd
     run_wizard(runner, profiles, add_selection, preferred_ppds=preferred_ppds)
 
 
@@ -311,6 +381,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         nargs="?",
         help="optional local v1.5.9 archive; otherwise download it from BIXOLON",
+    )
+    xprinter = sub.add_parser(
+        "install-xprinter-driver",
+        parents=[common],
+        help="download and install the official XPrinter POS CUPS driver",
+    )
+    xprinter.add_argument(
+        "package",
+        type=Path,
+        nargs="?",
+        help="optional local v3.13.11 RAR or Debian package; otherwise download it",
     )
     test = sub.add_parser("test", parents=[common])
     test.add_argument("--printer", required=True)
@@ -428,6 +509,36 @@ def _dispatch(args: argparse.Namespace) -> None:
         print(
             f"Installed BIXOLON {installed.version} for {installed.architecture}; "
             f"PPD: {installed.ppd_path}"
+        )
+    elif args.command == "install-xprinter-driver":
+        _root()
+        if not _confirm(
+            "Download if needed and install XPrinter's proprietary driver under its license?",
+            args.yes,
+        ):
+            print("XPrinter driver installation cancelled.")
+            return
+        installed_xprinter = _install_xprinter_source(runner, state, args.package)
+        if installed_xprinter is None:
+            return
+        managed_xprinter = [
+            (printer, XPRINTER_PROFILE_MODELS[printer.profile])
+            for printer in state.printers.values()
+            if printer.profile in XPRINTER_PROFILE_MODELS
+        ]
+        if managed_xprinter and _confirm(
+            f"Apply the official driver to {len(managed_xprinter)} managed XPrinter queue(s)?",
+            args.yes,
+        ):
+            for printer, model in managed_xprinter:
+                printer.driver = None
+                printer.ppd = str(installed_xprinter.ppd_paths[model])
+                printer.cups_options = dict(XPRINTER_CUPS_OPTIONS[model])
+                cups.create_or_update_queue(runner, printer)
+            save_state(state)
+        print(
+            f"Installed XPrinter {installed_xprinter.version} for "
+            f"{installed_xprinter.architecture}; POS-58/76/80 PPDs are ready."
         )
     elif args.command == "adopt-printer":
         cmd_adopt(args, runner, state)

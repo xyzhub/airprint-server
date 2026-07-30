@@ -19,6 +19,7 @@ from airprint_server.config import (
     initialize_config,
     save_state,
 )
+from airprint_server.xprinter_driver import remove_xprinter_driver
 
 RUNTIME_PACKAGES = [
     "cups",
@@ -250,6 +251,10 @@ def uninstall(
         "Remove the BIXOLON CUPS driver installed by this project?"
     ):
         remove_bixolon_driver(state)
+    if remove_escpos and "xprinter-pos-cups" in state.vendor_drivers and confirm(
+        "Remove the XPrinter CUPS driver installed by this project?"
+    ):
+        remove_xprinter_driver(state)
     restore_ipp_usb(runner, state)
     if (
         remove_config
