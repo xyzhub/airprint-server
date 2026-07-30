@@ -1,0 +1,12 @@
+id: bixolon-pos-cups
+version: 1.5.9
+archive: Software_BxlPOSCupsDrv_Linux_v1.5.9.tgz
+sha256: 6a081d40dfb62cd5a42a816b7e52f9628c20e3aca65c61564e9ebb0862a18d1e
+source: https://www.bixolon.com/download_view.php?idx=73
+redistributable: false
+supported_models:
+  - BIXOLON SRP-E300
+required_files:
+  ppd: Software_BxlPOSCupsDrv_Linux_v1.5.9/Bixolon/SRPE300_v1.0.3.ppd
+  arm64_filter: Software_BxlPOSCupsDrv_Linux_v1.5.9/filters/rastertoBixolon_v1.5.9_RaspberryPi_x64
+  armhf_filter: Software_BxlPOSCupsDrv_Linux_v1.5.9/filters/rastertoBixolon_v1.5.9_RaspberryPi_x86

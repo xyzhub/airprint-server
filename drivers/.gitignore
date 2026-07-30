@@ -1,0 +1,7 @@
+# Vendor driver payloads are supplied by the user under their vendor license.
+*.tgz
+*.tar.gz
+*.zip
+
+# Ignore extracted BIXOLON packages as well as their original archives.
+Software_BxlPOSCupsDrv_Linux_v*/

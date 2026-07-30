@@ -34,6 +34,11 @@ printer is compatible. Cutter behavior, printable width, USB enumeration, and
 vendor firmware vary. Installer compatibility checks cover Bookworm and
 Trixie, but physical printer validation remains necessary.
 
+Proprietary vendor driver archives belong in the local [`drivers/`](drivers/)
+drop-in directory. They are ignored by Git and are not redistributed by this
+project; checked-in manifests record their expected source, version, checksum,
+and required model-specific files.
+
 ## Installation
 
 On a fresh supported machine:
