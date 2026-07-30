@@ -32,7 +32,7 @@ Trixie, but physical printer validation remains necessary.
 On a fresh supported machine:
 
 ```sh
-git clone <repository-url>
+git clone https://github.com/xyzhub/airprint-server.git
 cd airprint-server
 sudo ./install.sh
 ```
