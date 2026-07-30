@@ -161,13 +161,40 @@ def _filter_destination(runner: Runner) -> Path:
     return server_bin / "filter" / BIXOLON_FILTER_NAME
 
 
+def _host_version(os_release: Path = Path("/etc/os-release")) -> str:
+    try:
+        lines = os_release.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise RuntimeError(f"cannot read host release information: {exc}") from exc
+    values = dict(line.split("=", 1) for line in lines if "=" in line)
+    version = values.get("VERSION_ID", "").strip('"')
+    if version not in {"12", "13"}:
+        raise RuntimeError(f"unsupported Debian/Raspberry Pi OS version: {version or 'unknown'}")
+    return version
+
+
+def installed_bixolon_ppd(state: State) -> Path | None:
+    details = state.vendor_drivers.get("bixolon-pos-cups")
+    if not details:
+        return None
+    ppd_path = Path(details.get("ppd_path", ""))
+    filter_path = Path(details.get("filter_path", ""))
+    if (
+        details.get("version") == BIXOLON_VERSION
+        and ppd_path.is_file()
+        and filter_path.is_file()
+    ):
+        return ppd_path
+    return None
+
+
 def install_bixolon_driver(
     runner: Runner,
     state: State,
     archive_path: Path,
     *,
     machine: str | None = None,
-    os_version: str = "13",
+    os_version: str | None = None,
     expected_sha256: str = BIXOLON_SHA256,
     data_dir: Path = BIXOLON_DATA_DIR,
     filter_path: Path | None = None,
@@ -179,7 +206,8 @@ def install_bixolon_driver(
         machine=machine,
         expected_sha256=expected_sha256,
     )
-    dependency = "libcupsimage2t64" if os_version == "13" else "libcupsimage2"
+    host_version = os_version or _host_version()
+    dependency = "libcupsimage2t64" if host_version == "13" else "libcupsimage2"
     install_package_list(runner, state, [dependency])
     selected_filter_path = filter_path or _filter_destination(runner)
     selected_ppd_path = data_dir / BIXOLON_PPD_PATH.name

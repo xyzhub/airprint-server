@@ -11,6 +11,11 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from airprint_server import DESCRIPTION, __version__, cups, installer
+from airprint_server.bixolon_driver import (
+    BIXOLON_CUPS_OPTIONS,
+    install_bixolon_driver,
+    installed_bixolon_ppd,
+)
 from airprint_server.commands import CommandError, Runner
 from airprint_server.config import (
     PROFILE_DIR,
@@ -101,9 +106,24 @@ def cmd_add(
         raise ValidationError(
             f"CUPS queue {name!r} already exists and is unmanaged; use adopt-printer first"
         )
-    ppd = str(readable_ppd(args.ppd)) if args.ppd else None
-    driver = args.driver or (selected.driver if selected else None)
-    options = selected.default_options() if selected else {}
+    official_ppd = installed_bixolon_ppd(state)
+    use_official_bixolon = bool(
+        selected
+        and selected.id == "bixolon-srp-e300"
+        and official_ppd
+        and not args.driver
+        and (not args.ppd or Path(args.ppd) == official_ppd)
+    )
+    ppd_source = args.ppd or (str(official_ppd) if use_official_bixolon else None)
+    ppd = str(readable_ppd(ppd_source)) if ppd_source else None
+    driver = args.driver or (None if ppd else selected.driver if selected else None)
+    options = (
+        dict(BIXOLON_CUPS_OPTIONS)
+        if use_official_bixolon
+        else selected.default_options()
+        if selected
+        else {}
+    )
     description = args.description or (selected.display_name if selected else name)
     managed = ManagedPrinter(
         name=name,
@@ -158,6 +178,10 @@ def cmd_setup(
     _root()
 
     def add_selection(selection: WizardSelection) -> None:
+        official_ppd = installed_bixolon_ppd(state)
+        use_official = selection.profile == "bixolon-srp-e300" and official_ppd is not None
+        if use_official:
+            print(f"Using installed official BIXOLON PPD: {official_ppd}")
         add_args = argparse.Namespace(
             name=selection.name,
             description=selection.description,
@@ -167,8 +191,8 @@ def cmd_setup(
             port=9100,
             disable_snmp=False,
             device_uri=selection.device_uri,
-            driver=selection.driver,
-            ppd=selection.ppd,
+            driver=None if use_official else selection.driver,
+            ppd=str(official_ppd) if use_official else selection.ppd,
             disable_ipp_usb=False,
             adopt=False,
             yes=args.yes,
@@ -239,6 +263,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="check whether an update is available without changing the system",
     )
+    bixolon = sub.add_parser(
+        "install-bixolon-driver",
+        parents=[common],
+        help="install a user-supplied official BIXOLON Linux CUPS driver archive",
+    )
+    bixolon.add_argument("archive", type=Path)
     test = sub.add_parser("test", parents=[common])
     test.add_argument("--printer", required=True)
     test.add_argument("--test-cutter", action="store_true")
@@ -320,6 +350,40 @@ def _dispatch(args: argparse.Namespace) -> None:
             print(f"Updated airprint-server to {result.available_revision[:12]}.")
         else:
             print(f"airprint-server is already up to date: {result.available_revision[:12]}")
+    elif args.command == "install-bixolon-driver":
+        _root()
+        if not _confirm(
+            "Install BIXOLON's proprietary driver under the license included in the archive?",
+            args.yes,
+        ):
+            print("BIXOLON driver installation cancelled.")
+            return
+        installed = install_bixolon_driver(runner, state, args.archive)
+        if runner.dry_run:
+            print(
+                f"Would install BIXOLON {installed.version} for {installed.architecture}: "
+                f"{installed.ppd_path}"
+            )
+            return
+        managed_bixolon = [
+            printer
+            for printer in state.printers.values()
+            if printer.profile == "bixolon-srp-e300"
+        ]
+        if managed_bixolon and _confirm(
+            f"Apply the official driver to {len(managed_bixolon)} managed SRP-E300 queue(s)?",
+            args.yes,
+        ):
+            for printer in managed_bixolon:
+                printer.driver = None
+                printer.ppd = str(installed.ppd_path)
+                printer.cups_options = dict(BIXOLON_CUPS_OPTIONS)
+                cups.create_or_update_queue(runner, printer)
+        save_state(state)
+        print(
+            f"Installed BIXOLON {installed.version} for {installed.architecture}; "
+            f"PPD: {installed.ppd_path}"
+        )
     elif args.command == "adopt-printer":
         cmd_adopt(args, runner, state)
     elif args.command == "remove-printer":

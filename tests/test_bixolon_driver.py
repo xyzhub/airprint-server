@@ -87,6 +87,7 @@ def test_installs_only_validated_filter_and_ppd(
         state,
         archive,
         machine="aarch64",
+        os_version="13",
         expected_sha256=checksum,
         data_dir=data_dir,
         filter_path=filter_path,
