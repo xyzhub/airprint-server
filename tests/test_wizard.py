@@ -138,3 +138,4 @@ def test_install_wizard_mode_defaults() -> None:
     assert parser.parse_args(["install"]).wizard is None
     assert parser.parse_args(["install", "--wizard"]).wizard is True
     assert parser.parse_args(["install", "--no-wizard"]).wizard is False
+    assert parser.parse_args(["update", "--check"]).check is True

@@ -65,6 +65,9 @@ class State:
     avahi_services: list[str] = field(default_factory=list)
     ipp_usb_previous: dict[str, Any] | None = None
     installed_packages: list[str] = field(default_factory=list)
+    update_source: str | None = None
+    update_remote: str | None = None
+    installed_revision: str | None = None
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> State:
@@ -83,6 +86,11 @@ class State:
             avahi_services=[str(v) for v in raw.get("avahi_services", [])],
             ipp_usb_previous=raw.get("ipp_usb_previous"),
             installed_packages=[str(v) for v in raw.get("installed_packages", [])],
+            update_source=str(raw["update_source"]) if raw.get("update_source") else None,
+            update_remote=str(raw["update_remote"]) if raw.get("update_remote") else None,
+            installed_revision=(
+                str(raw["installed_revision"]) if raw.get("installed_revision") else None
+            ),
         )
 
 
@@ -125,4 +133,3 @@ def initialize_config(path: Path = CONFIG_PATH) -> None:
     if not path.exists():
         atomic_write_yaml(path, {"version": 1, "airprint": {"remote_admin": False}})
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-

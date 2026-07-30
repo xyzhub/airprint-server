@@ -239,6 +239,48 @@ unrelated queues, vendor drivers, user PPDs, and independently installed
 rastertoescpos untouched. Use `--keep-queues`, `--keep-config`, `--keep-state`,
 or `--keep-escpos` as needed.
 
+## Updates
+
+After installing a version that contains the updater, check for a new revision:
+
+```sh
+sudo airprint-server update --check
+```
+
+Review and install it:
+
+```sh
+sudo airprint-server update
+```
+
+Use `--yes` for unattended confirmation or `--dry-run` to show the planned
+revision without changing the system:
+
+```sh
+sudo airprint-server update --yes
+sudo airprint-server update --dry-run
+```
+
+The first update creates a root-owned checkout at
+`/var/lib/airprint-server/source`. Updates are restricted to
+`https://github.com/xyzhub/airprint-server.git`, branch `main`; the command
+refuses a changed remote, non-root-owned or writable source, dirty files,
+symbolic links, branch changes, and non-fast-forward history. It shows the
+target commit and requires confirmation before downloading or executing the
+new installer. Printer setup is not launched and existing managed queues are
+preserved.
+
+Older installations without the `update` operation need one manual bootstrap:
+
+```sh
+cd ~/airprint-server
+git pull --ff-only
+sudo ./install.sh --no-wizard
+```
+
+See [updating securely](docs/updating.md) for the trust model and recovery
+procedure.
+
 ## Development checks
 
 No CUPS daemon or root access is needed:
@@ -266,5 +308,5 @@ updates.
 
 More detail: [Raspberry Pi](docs/raspberry-pi.md),
 [network printers](docs/network-printers.md), [USB printers](docs/usb-printers.md),
-[setup wizard](docs/setup-wizard.md), and
+[setup wizard](docs/setup-wizard.md), [updates](docs/updating.md), and
 [troubleshooting](docs/troubleshooting.md).

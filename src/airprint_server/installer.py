@@ -27,11 +27,12 @@ RUNTIME_PACKAGES = [
     "cups-filters-core-drivers",
     "avahi-daemon",
     "avahi-utils",
+    "git",
     "python3",
     "python3-venv",
     "python3-yaml",
 ]
-BUILD_PACKAGES = ["git", "build-essential", "libcups2-dev", "cups-ppdc"]
+BUILD_PACKAGES = ["build-essential", "libcups2-dev", "cups-ppdc"]
 SUPPORTED_IDS = {"debian", "raspbian"}
 SUPPORTED_VERSIONS = {"12", "13"}
 

@@ -4,7 +4,13 @@ from conftest import FakeRunner
 
 from airprint_server.commands import CommandResult
 from airprint_server.config import ManagedPrinter, State
-from airprint_server.installer import ipp_usb_state, operating_system, uninstall
+from airprint_server.installer import (
+    BUILD_PACKAGES,
+    RUNTIME_PACKAGES,
+    ipp_usb_state,
+    operating_system,
+    uninstall,
+)
 
 
 def test_ipp_usb_detection() -> None:
@@ -19,6 +25,11 @@ def test_ipp_usb_detection() -> None:
         }
     )
     assert ipp_usb_state(runner) == {"installed": True, "active": True, "enabled": False}  # type: ignore[arg-type]
+
+
+def test_git_is_available_without_escpos_build_dependencies() -> None:
+    assert "git" in RUNTIME_PACKAGES
+    assert "git" not in BUILD_PACKAGES
 
 
 def test_supported_bookworm_and_trixie(tmp_path: Path) -> None:

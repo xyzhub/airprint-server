@@ -23,6 +23,7 @@ from airprint_server.diagnostics import diagnose, recent_logs
 from airprint_server.discovery import discover_network, discover_usb, select_usb
 from airprint_server.profiles import PrinterProfile, load_profiles
 from airprint_server.testprint import submit_cutter_test, submit_test
+from airprint_server.updater import update_project
 from airprint_server.validation import (
     ValidationError,
     device_uri,
@@ -231,6 +232,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("discover-usb", parents=[common])
     sub.add_parser("list-profiles", parents=[common])
     sub.add_parser("setup", parents=[common], help="run the interactive printer setup wizard")
+    update = sub.add_parser("update", parents=[common], help="securely update from GitHub")
+    update.add_argument(
+        "--check",
+        action="store_true",
+        help="check whether an update is available without changing the system",
+    )
     test = sub.add_parser("test", parents=[common])
     test.add_argument("--printer", required=True)
     test.add_argument("--test-cutter", action="store_true")
@@ -290,6 +297,26 @@ def _dispatch(args: argparse.Namespace) -> None:
         cmd_add(args, runner, state, profiles)
     elif args.command == "setup":
         cmd_setup(args, runner, state, profiles)
+    elif args.command == "update":
+        _root()
+        result = update_project(
+            runner,
+            confirm=lambda message: _confirm(message, args.yes),
+            check_only=args.check,
+        )
+        if args.check:
+            if result.update_available:
+                print(f"Update available: {result.available_revision[:12]}")
+            else:
+                print(f"airprint-server is up to date: {result.available_revision[:12]}")
+        elif result.cancelled:
+            print("Update cancelled.")
+        elif result.dry_run:
+            print(f"Would update to {result.available_revision[:12]}.")
+        elif result.changed:
+            print(f"Updated airprint-server to {result.available_revision[:12]}.")
+        else:
+            print(f"airprint-server is already up to date: {result.available_revision[:12]}")
     elif args.command == "adopt-printer":
         cmd_adopt(args, runner, state)
     elif args.command == "remove-printer":
