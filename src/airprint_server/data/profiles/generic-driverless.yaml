@@ -1,0 +1,9 @@
+id: generic-driverless
+display_name: Generic driverless or vendor-driver printer
+category: general
+status: generic
+monochrome: false
+cutter: false
+supported_connections: [socket, usb, ipp, ipps, lpd, custom-uri]
+cups_options: {}
+
