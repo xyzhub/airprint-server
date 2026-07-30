@@ -55,6 +55,37 @@ sudo ./install.sh --without-escpos
 Repeated installation checks packages and driver availability before acting.
 It does not recreate queues or reset their options.
 
+### Interactive setup wizard
+
+When `sudo ./install.sh` runs in a terminal, it automatically starts a guided
+printer setup after installing the system components. The wizard:
+
+1. Detects stable CUPS `usb://` printers and IPP/IPPS devices exposed by
+   `ipp-usb`.
+2. Offers raw TCP socket, manual IPP/IPPS, LPD, and custom URI connections.
+3. Suggests an appropriate profile from the detected make and model.
+4. Uses the profile driver, suggests matching installed CUPS models, or asks
+   for a vendor PPD when necessary.
+5. Validates the queue name and AirPrint display name before showing the normal
+   queue confirmation.
+6. Offers to configure additional printers.
+
+Run the wizard again at any time:
+
+```sh
+sudo airprint-server setup
+```
+
+For unattended provisioning, skip interaction:
+
+```sh
+sudo ./install.sh --no-wizard
+```
+
+Use `sudo airprint-server install --wizard` to force the wizard when standard
+input is not detected as a terminal. See the
+[setup wizard guide](docs/setup-wizard.md).
+
 ## Add printers
 
 Raw TCP network ESC/POS:
@@ -230,4 +261,5 @@ updates.
 
 More detail: [Raspberry Pi](docs/raspberry-pi.md),
 [network printers](docs/network-printers.md), [USB printers](docs/usb-printers.md),
-and [troubleshooting](docs/troubleshooting.md).
+[setup wizard](docs/setup-wizard.md), and
+[troubleshooting](docs/troubleshooting.md).

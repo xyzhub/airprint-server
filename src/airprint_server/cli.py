@@ -32,6 +32,7 @@ from airprint_server.validation import (
     readable_ppd,
     socket_uri,
 )
+from airprint_server.wizard import WizardSelection, run_wizard
 
 LOG = logging.getLogger("airprint-server")
 
@@ -146,6 +147,35 @@ def cmd_adopt(args: argparse.Namespace, runner: Runner, state: State) -> None:
     print(f"Adopted {name} without changing its CUPS configuration.")
 
 
+def cmd_setup(
+    args: argparse.Namespace,
+    runner: Runner,
+    state: State,
+    profiles: dict[str, PrinterProfile],
+) -> None:
+    _root()
+
+    def add_selection(selection: WizardSelection) -> None:
+        add_args = argparse.Namespace(
+            name=selection.name,
+            description=selection.description,
+            profile=selection.profile,
+            connection=selection.connection,
+            host=None,
+            port=9100,
+            disable_snmp=False,
+            device_uri=selection.device_uri,
+            driver=selection.driver,
+            ppd=selection.ppd,
+            disable_ipp_usb=False,
+            adopt=False,
+            yes=args.yes,
+        )
+        cmd_add(add_args, runner, state, profiles)
+
+    run_wizard(runner, profiles, add_selection)
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -156,9 +186,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("-v", "--verbose", action="count", default=0)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("install", parents=[common]).add_argument(
+    install_parser = sub.add_parser("install", parents=[common])
+    install_parser.add_argument(
         "--without-escpos", action="store_true"
     )
+    wizard_mode = install_parser.add_mutually_exclusive_group()
+    wizard_mode.add_argument(
+        "--wizard",
+        action="store_true",
+        help="run interactive printer setup even when input is not a terminal",
+    )
+    wizard_mode.add_argument(
+        "--no-wizard",
+        action="store_false",
+        dest="wizard",
+        help="install components without interactive printer setup",
+    )
+    install_parser.set_defaults(wizard=None)
     uninstall_parser = sub.add_parser("uninstall", parents=[common])
     uninstall_parser.add_argument("--keep-queues", action="store_true")
     uninstall_parser.add_argument("--keep-config", action="store_true")
@@ -186,6 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("discover", parents=[common])
     sub.add_parser("discover-usb", parents=[common])
     sub.add_parser("list-profiles", parents=[common])
+    sub.add_parser("setup", parents=[common], help="run the interactive printer setup wizard")
     test = sub.add_parser("test", parents=[common])
     test.add_argument("--printer", required=True)
     test.add_argument("--test-cutter", action="store_true")
@@ -215,6 +260,11 @@ def _dispatch(args: argparse.Namespace) -> None:
             / "scripts",
         )
         print("Installation complete.")
+        use_wizard = args.wizard is True or (args.wizard is None and sys.stdin.isatty())
+        if use_wizard:
+            cmd_setup(args, runner, state, profiles)
+        else:
+            print("Run 'sudo airprint-server setup' later to add a printer interactively.")
     elif args.command == "uninstall":
         installer.uninstall(
             runner,
@@ -238,6 +288,8 @@ def _dispatch(args: argparse.Namespace) -> None:
             if not runner.dry_run:
                 save_state(state)
         cmd_add(args, runner, state, profiles)
+    elif args.command == "setup":
+        cmd_setup(args, runner, state, profiles)
     elif args.command == "adopt-printer":
         cmd_adopt(args, runner, state)
     elif args.command == "remove-printer":

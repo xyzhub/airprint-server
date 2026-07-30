@@ -25,4 +25,5 @@ ln -sfn "$VENV_DIR/bin/airprint-server" "$CLI_LINK"
 AIRPRINT_SERVER_SOURCE_DIR="$PROJECT_DIR" "$CLI_LINK" install "$@"
 
 echo
-echo "airprint-server is installed. Next: sudo airprint-server list-profiles"
+echo "airprint-server is installed."
+echo "Run 'sudo airprint-server setup' at any time to add another printer."

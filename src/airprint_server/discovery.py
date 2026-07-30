@@ -11,6 +11,7 @@ from airprint_server.commands import Runner
 from airprint_server.validation import host, port
 
 USB_LINE_RE = re.compile(r"^(?:direct|serial)\s+(usb://\S+)")
+DEVICE_LINE_RE = re.compile(r"^(?:direct|network|serial)\s+(\S+://\S+)")
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,20 @@ def parse_lpinfo_devices(output: str) -> list[USBDevice]:
             seen.add(match.group(1))
             devices.append(parse_usb_uri(match.group(1)))
     return devices
+
+
+def parse_lpinfo_ipp_uris(output: str) -> list[str]:
+    uris: list[str] = []
+    seen: set[str] = set()
+    for line in output.splitlines():
+        match = DEVICE_LINE_RE.match(line.strip())
+        if not match:
+            continue
+        uri = match.group(1)
+        if urlsplit(uri).scheme.lower() in {"ipp", "ipps"} and uri not in seen:
+            seen.add(uri)
+            uris.append(uri)
+    return uris
 
 
 def discover_usb(runner: Runner) -> list[USBDevice]:
@@ -96,4 +111,3 @@ def discover_network(runner: Runner) -> str:
     if result.returncode not in {0, 124}:
         raise RuntimeError(f"Avahi discovery failed: {result.stderr.strip()}")
     return result.stdout
-
