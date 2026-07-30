@@ -6,12 +6,17 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from conftest import FakeRunner
 
 from airprint_server.bixolon_driver import (
+    BIXOLON_CUPS_OPTIONS,
     BIXOLON_FILTER_MEMBERS,
     BIXOLON_PPD_MEMBER,
+    install_bixolon_driver,
     load_bixolon_payload,
 )
+from airprint_server.commands import CommandResult
+from airprint_server.config import State
 from airprint_server.validation import ValidationError
 
 
@@ -60,3 +65,36 @@ def test_rejects_unsupported_architecture(tmp_path: Path) -> None:
     archive, checksum = _archive(tmp_path)
     with pytest.raises(ValidationError, match="unsupported.*architecture"):
         load_bixolon_payload(archive, machine="riscv64", expected_sha256=checksum)
+
+
+def test_installs_only_validated_filter_and_ppd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    archive, checksum = _archive(tmp_path)
+    monkeypatch.setattr("airprint_server.bixolon_driver.require_root", lambda: None)
+    package = ("dpkg-query", "-W", "-f=${Status}", "libcupsimage2t64")
+    runner = FakeRunner(
+        {
+            package: CommandResult(package, 0, "install ok installed"),
+        }
+    )
+    state = State()
+    filter_path = tmp_path / "cups" / "filter" / "rastertoBixolon"
+    data_dir = tmp_path / "data"
+
+    installed = install_bixolon_driver(
+        runner,  # type: ignore[arg-type]
+        state,
+        archive,
+        machine="aarch64",
+        expected_sha256=checksum,
+        data_dir=data_dir,
+        filter_path=filter_path,
+    )
+
+    assert installed.ppd_path.read_bytes().startswith(b"*ModelName")
+    assert installed.filter_path.read_bytes() == b"\x7fELF-arm64"
+    assert installed.filter_path.stat().st_mode & 0o777 == 0o755
+    assert state.vendor_drivers["bixolon-pos-cups"]["version"] == "1.5.9"
+    assert ("systemctl", "reload-or-restart", "cups.service") in runner.calls
+    assert BIXOLON_CUPS_OPTIONS["PageCut"] == "4JobCutFeed"

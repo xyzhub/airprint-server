@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from airprint_server.commands import Runner
+from airprint_server.config import State
+from airprint_server.installer import install_package_list, require_root
 from airprint_server.validation import ValidationError
 
 BIXOLON_VERSION = "1.5.9"
@@ -30,6 +35,18 @@ ARCHITECTURE_ALIASES = {
 }
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_MEMBER_BYTES = 16 * 1024 * 1024
+BIXOLON_DATA_DIR = Path("/var/lib/airprint-server/drivers/bixolon")
+BIXOLON_PPD_PATH = BIXOLON_DATA_DIR / "SRPE300_v1.0.3.ppd"
+BIXOLON_FILTER_NAME = "rastertoBixolon"
+BIXOLON_CUPS_OPTIONS = {
+    "PageSize": "61X72MMY70MM",
+    "Resolution": "180dpi",
+    "ColorModel": "1Gray",
+    "PageType": "0Variable",
+    "Dithering": "1True",
+    "PageCut": "4JobCutFeed",
+    "print-scaling-default": "fit",
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +56,14 @@ class BixolonPayload:
     archive_sha256: str
     ppd: bytes
     filter_binary: bytes
+
+
+@dataclass(frozen=True)
+class BixolonInstallation:
+    version: str
+    architecture: str
+    ppd_path: Path
+    filter_path: Path
 
 
 def _archive_sha256(path: Path) -> str:
@@ -108,3 +133,83 @@ def load_bixolon_payload(
     if b'*ModelName:             "BIXOLON SRP-E300"' not in ppd:
         raise ValidationError("BIXOLON PPD does not identify the SRP-E300")
     return BixolonPayload(BIXOLON_VERSION, architecture, actual_sha256, ppd, filter_binary)
+
+
+def _stage_file(destination: Path, content: bytes, mode: int) -> str:
+    if destination.is_symlink():
+        raise RuntimeError(f"refusing to replace symbolic link: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
+        return temporary
+    except BaseException:
+        os.unlink(temporary)
+        raise
+
+
+def _filter_destination(runner: Runner) -> Path:
+    if runner.dry_run:
+        return Path("/usr/lib/cups/filter") / BIXOLON_FILTER_NAME
+    server_bin = Path(runner.run(["cups-config", "--serverbin"]).stdout.strip())
+    if not server_bin.is_absolute() or ".." in server_bin.parts:
+        raise RuntimeError(f"cups-config returned an unsafe serverbin path: {server_bin}")
+    return server_bin / "filter" / BIXOLON_FILTER_NAME
+
+
+def install_bixolon_driver(
+    runner: Runner,
+    state: State,
+    archive_path: Path,
+    *,
+    machine: str | None = None,
+    os_version: str = "13",
+    expected_sha256: str = BIXOLON_SHA256,
+    data_dir: Path = BIXOLON_DATA_DIR,
+    filter_path: Path | None = None,
+) -> BixolonInstallation:
+    """Install only the validated SRP-E300 PPD and matching CUPS filter."""
+    require_root()
+    payload = load_bixolon_payload(
+        archive_path,
+        machine=machine,
+        expected_sha256=expected_sha256,
+    )
+    dependency = "libcupsimage2t64" if os_version == "13" else "libcupsimage2"
+    install_package_list(runner, state, [dependency])
+    selected_filter_path = filter_path or _filter_destination(runner)
+    selected_ppd_path = data_dir / BIXOLON_PPD_PATH.name
+    installation = BixolonInstallation(
+        payload.version,
+        payload.architecture,
+        selected_ppd_path,
+        selected_filter_path,
+    )
+    if runner.dry_run:
+        return installation
+
+    staged_filter = _stage_file(selected_filter_path, payload.filter_binary, 0o755)
+    staged_ppd = _stage_file(selected_ppd_path, payload.ppd, 0o644)
+    try:
+        linkage = runner.run(["ldd", staged_filter], check=False)
+        if linkage.returncode or "not found" in f"{linkage.stdout}\n{linkage.stderr}":
+            raise RuntimeError("BIXOLON filter has unresolved runtime library dependencies")
+        os.replace(staged_filter, selected_filter_path)
+        os.replace(staged_ppd, selected_ppd_path)
+    finally:
+        for temporary in (staged_filter, staged_ppd):
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    runner.run(["systemctl", "reload-or-restart", "cups.service"])
+    state.vendor_drivers["bixolon-pos-cups"] = {
+        "version": payload.version,
+        "architecture": payload.architecture,
+        "archive_sha256": payload.archive_sha256,
+        "ppd_path": str(selected_ppd_path),
+        "filter_path": str(selected_filter_path),
+    }
+    return installation

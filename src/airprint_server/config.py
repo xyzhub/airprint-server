@@ -68,6 +68,7 @@ class State:
     update_source: str | None = None
     update_remote: str | None = None
     installed_revision: str | None = None
+    vendor_drivers: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> State:
@@ -76,6 +77,15 @@ class State:
             raise ValidationError("state printers must be a mapping")
         printers = {
             name: ManagedPrinter.from_mapping(value) for name, value in printers_raw.items()
+        }
+        vendor_drivers_raw = raw.get("vendor_drivers", {})
+        if not isinstance(vendor_drivers_raw, dict) or any(
+            not isinstance(value, dict) for value in vendor_drivers_raw.values()
+        ):
+            raise ValidationError("state vendor_drivers must be a mapping of mappings")
+        vendor_drivers = {
+            str(name): {str(key): str(value) for key, value in details.items()}
+            for name, details in vendor_drivers_raw.items()
         }
         return cls(
             version=int(raw.get("version", 1)),
@@ -91,6 +101,7 @@ class State:
             installed_revision=(
                 str(raw["installed_revision"]) if raw.get("installed_revision") else None
             ),
+            vendor_drivers=vendor_drivers,
         )
 
 
