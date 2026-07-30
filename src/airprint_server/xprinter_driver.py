@@ -14,6 +14,8 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from airprint_server.commands import Runner
+from airprint_server.config import State
 from airprint_server.validation import ValidationError
 
 XPRINTER_VERSION = "3.13.11"
@@ -51,6 +53,28 @@ ELF_MACHINES = {"aarch64": 183, "armv7l": 40, "x86_64": 62, "i686": 3}
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 MAX_DEB_BYTES = 8 * 1024 * 1024
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
+XPRINTER_DATA_DIR = Path("/var/lib/airprint-server/drivers/xprinter")
+XPRINTER_CUPS_OPTIONS = {
+    "58": {
+        "PageSize": "X48MMY297MM",
+        "PageCutType": "0NoCutPage",
+        "DocCutType": "0NoCutDoc",
+        "print-scaling-default": "fit",
+    },
+    "76": {
+        "PageSize": "X63MMY70MM",
+        "PageCutType": "0NoCutPage",
+        "DocCutType": "0NoCutDoc",
+        "print-scaling-default": "fit",
+    },
+    "80": {
+        "PageSize": "X72MMY297MM",
+        "PageCutType": "0NoCutPage",
+        "DocCutType": "1PartialCutDoc",
+        "FeedCutAfterJobEnd": "4Line",
+        "print-scaling-default": "fit",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -60,6 +84,14 @@ class XPrinterPayload:
     package_sha256: str
     ppds: dict[str, bytes]
     filters: dict[str, bytes]
+
+
+@dataclass(frozen=True)
+class XPrinterInstallation:
+    version: str
+    architecture: str
+    ppd_paths: dict[str, Path]
+    filter_paths: dict[str, Path]
 
 
 def _sha256_bytes(content: bytes) -> str:
@@ -207,6 +239,11 @@ def load_xprinter_payload(
     if package_path.stat().st_size > MAX_DEB_BYTES:
         raise ValidationError("XPrinter Debian package exceeds the 8 MiB safety limit")
     content = package_path.read_bytes()
+    if content.startswith(b"line=`wc -l $0"):
+        raise ValidationError(
+            "legacy XPrinter 2.4.0 installers contain only Intel Linux filters; "
+            "use the automatic v3.13.11 download on Raspberry Pi"
+        )
     actual_sha256 = _sha256_bytes(content)
     if actual_sha256 != expected_sha256:
         raise ValidationError(
@@ -257,3 +294,246 @@ def load_xprinter_payload(
     for filter_name, binary in filters.items():
         _validate_elf(binary, architecture, filter_name)
     return XPrinterPayload(XPRINTER_VERSION, architecture, actual_sha256, ppds, filters)
+
+
+def _require_root() -> None:
+    if os.geteuid() != 0:
+        raise PermissionError("XPrinter driver installation requires root; rerun with sudo")
+
+
+def _host_version(os_release: Path = Path("/etc/os-release")) -> str:
+    try:
+        lines = os_release.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise RuntimeError(f"cannot read host release information: {exc}") from exc
+    values = dict(line.split("=", 1) for line in lines if "=" in line)
+    version = values.get("VERSION_ID", "").strip('"')
+    if version not in {"12", "13"}:
+        raise RuntimeError(f"unsupported Debian/Raspberry Pi OS version: {version or 'unknown'}")
+    return version
+
+
+def _install_dependencies(runner: Runner, state: State, packages: list[str]) -> None:
+    missing = [
+        package
+        for package in packages
+        if runner.run(
+            ["dpkg-query", "-W", "-f=${Status}", package],
+            check=False,
+        ).stdout.strip()
+        != "install ok installed"
+    ]
+    if not missing:
+        return
+    runner.run(["apt-get", "update"])
+    runner.run(["apt-get", "install", "-y", "--no-install-recommends", *missing])
+    state.installed_packages = sorted(set(state.installed_packages).union(missing))
+
+
+def _filter_directory(runner: Runner) -> Path:
+    if runner.dry_run:
+        return Path("/usr/lib/cups/filter")
+    server_bin = Path(runner.run(["cups-config", "--serverbin"]).stdout.strip())
+    if not server_bin.is_absolute() or ".." in server_bin.parts:
+        raise RuntimeError(f"cups-config returned an unsafe serverbin path: {server_bin}")
+    return server_bin / "filter"
+
+
+def _archive_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _extract_xprinter_deb(
+    runner: Runner,
+    archive_path: Path,
+    destination_dir: Path,
+    *,
+    expected_archive_sha256: str,
+) -> Path:
+    if archive_path.is_symlink() or not archive_path.is_file():
+        raise ValidationError(f"XPrinter driver archive is not a regular file: {archive_path}")
+    if archive_path.stat().st_size > MAX_DOWNLOAD_BYTES:
+        raise ValidationError("XPrinter driver archive exceeds the 64 MiB safety limit")
+    if _archive_sha256(archive_path) != expected_archive_sha256:
+        raise ValidationError(
+            "XPrinter driver archive checksum mismatch; expected the official collection"
+        )
+    runner.run(
+        [
+            "unar",
+            "-quiet",
+            "-output-directory",
+            str(destination_dir),
+            str(archive_path),
+            XPRINTER_DEB_MEMBER,
+        ],
+        timeout=120,
+    )
+    package = destination_dir / XPRINTER_DEB_MEMBER
+    if package.is_symlink() or not package.is_file():
+        raise ValidationError(f"XPrinter archive did not produce {XPRINTER_DEB_NAME}")
+    if package.stat().st_size > MAX_DEB_BYTES:
+        raise ValidationError("extracted XPrinter Debian package exceeds the 8 MiB safety limit")
+    return package
+
+
+def installed_xprinter_ppd(state: State, model: str) -> Path | None:
+    details = state.vendor_drivers.get("xprinter-pos-cups")
+    if model not in XPRINTER_MODELS or not details:
+        return None
+    ppd_path = Path(details.get(f"ppd_{model}", ""))
+    filter_name = XPRINTER_MODEL_FILTERS[model]
+    filter_path = Path(details.get(f"filter_{filter_name}", ""))
+    if (
+        details.get("version") == XPRINTER_VERSION
+        and ppd_path.is_file()
+        and filter_path.is_file()
+    ):
+        return ppd_path
+    return None
+
+
+def install_xprinter_driver(
+    runner: Runner,
+    state: State,
+    source_path: Path,
+    *,
+    machine: str | None = None,
+    os_version: str | None = None,
+    expected_download_sha256: str = XPRINTER_DOWNLOAD_SHA256,
+    expected_deb_sha256: str = XPRINTER_DEB_SHA256,
+    data_dir: Path = XPRINTER_DATA_DIR,
+    filter_dir: Path | None = None,
+) -> XPrinterInstallation:
+    """Install only the validated POS-58/76/80 PPDs and matching filters."""
+    _require_root()
+    source_path = source_path.expanduser()
+    if source_path.is_symlink() or not source_path.is_file():
+        raise ValidationError(f"XPrinter driver source is not a regular file: {source_path}")
+    with source_path.open("rb") as source:
+        signature = source.read(32)
+    if signature.startswith(b"line=`wc -l $0"):
+        raise ValidationError(
+            "legacy XPrinter 2.4.0 installers contain only Intel Linux filters; "
+            "use the automatic v3.13.11 download on Raspberry Pi"
+        )
+    is_deb = signature.startswith(b"!<arch>\n")
+    if not is_deb and not signature.startswith(b"Rar!\x1a\x07"):
+        raise ValidationError(
+            "XPrinter driver source is neither the official RAR nor Debian package"
+        )
+    host_version = os_version or _host_version()
+    dependency = "libcupsimage2t64" if host_version == "13" else "libcupsimage2"
+    _install_dependencies(runner, state, [*(["unar"] if not is_deb else []), dependency])
+    if is_deb:
+        payload = load_xprinter_payload(
+            source_path,
+            machine=machine,
+            expected_sha256=expected_deb_sha256,
+        )
+    else:
+        with tempfile.TemporaryDirectory(prefix="airprint-server-xprinter-deb-") as temporary:
+            package = _extract_xprinter_deb(
+                runner,
+                source_path,
+                Path(temporary),
+                expected_archive_sha256=expected_download_sha256,
+            )
+            payload = load_xprinter_payload(
+                package,
+                machine=machine,
+                expected_sha256=expected_deb_sha256,
+            )
+    selected_filter_dir = filter_dir or _filter_directory(runner)
+    ppd_paths = {
+        model: data_dir / f"POS-{model}.ppd" for model in XPRINTER_MODELS
+    }
+    filter_paths = {
+        name: selected_filter_dir / f"{name}-pos" for name in payload.filters
+    }
+    installation = XPrinterInstallation(
+        payload.version,
+        payload.architecture,
+        ppd_paths,
+        filter_paths,
+    )
+    if runner.dry_run:
+        return installation
+
+    staged: dict[Path, str] = {}
+    try:
+        for model, content in payload.ppds.items():
+            staged[ppd_paths[model]] = _stage_file(ppd_paths[model], content, 0o644)
+        for name, content in payload.filters.items():
+            destination = filter_paths[name]
+            staged[destination] = _stage_file(destination, content, 0o755)
+        for destination in filter_paths.values():
+            linkage = runner.run(["ldd", staged[destination]], check=False)
+            if linkage.returncode or "not found" in f"{linkage.stdout}\n{linkage.stderr}":
+                raise RuntimeError(
+                    f"XPrinter filter has unresolved runtime dependencies: {destination.name}"
+                )
+        for destination, temporary in staged.items():
+            os.replace(temporary, destination)
+    finally:
+        for temporary in staged.values():
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    runner.run(["systemctl", "reload-or-restart", "cups.service"])
+    details = {
+        "version": payload.version,
+        "architecture": payload.architecture,
+        "package_sha256": payload.package_sha256,
+    }
+    details.update({f"ppd_{model}": str(path) for model, path in ppd_paths.items()})
+    details.update({f"filter_{name}": str(path) for name, path in filter_paths.items()})
+    state.vendor_drivers["xprinter-pos-cups"] = details
+    return installation
+
+
+def remove_xprinter_driver(
+    state: State,
+    *,
+    data_dir: Path = XPRINTER_DATA_DIR,
+    filter_dir: Path | None = None,
+) -> None:
+    """Remove only XPrinter paths previously recorded by this project."""
+    _require_root()
+    details = state.vendor_drivers.get("xprinter-pos-cups")
+    if not details:
+        return
+    expected_ppds = {
+        model: data_dir / f"POS-{model}.ppd" for model in XPRINTER_MODELS
+    }
+    recorded_ppds = {
+        model: Path(details.get(f"ppd_{model}", "")) for model in XPRINTER_MODELS
+    }
+    filter_names = set(XPRINTER_MODEL_FILTERS.values())
+    recorded_filters = {
+        name: Path(details.get(f"filter_{name}", "")) for name in filter_names
+    }
+    selected_filter_dir = filter_dir or next(iter(recorded_filters.values())).parent
+    expected_filters = {
+        name: selected_filter_dir / f"{name}-pos" for name in filter_names
+    }
+    if recorded_ppds != expected_ppds or recorded_filters != expected_filters:
+        raise RuntimeError("refusing to remove unexpected XPrinter driver paths")
+    if filter_dir is None and not (
+        selected_filter_dir.is_absolute()
+        and selected_filter_dir.name == "filter"
+        and "cups" in selected_filter_dir.parts
+        and selected_filter_dir.parts[:2] == ("/", "usr")
+    ):
+        raise RuntimeError("refusing to remove XPrinter filters outside the CUPS directory")
+    for path in [*recorded_ppds.values(), *recorded_filters.values()]:
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to remove symbolic link: {path}")
+        if path.exists():
+            path.unlink()
+    if data_dir.exists() and not any(data_dir.iterdir()):
+        data_dir.rmdir()
+    del state.vendor_drivers["xprinter-pos-cups"]

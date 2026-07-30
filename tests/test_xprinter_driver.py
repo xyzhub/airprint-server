@@ -6,7 +6,10 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from conftest import FakeRunner
 
+from airprint_server.commands import CommandResult
+from airprint_server.config import State
 from airprint_server.validation import ValidationError
 from airprint_server.xprinter_driver import (
     ELF_MACHINES,
@@ -14,7 +17,9 @@ from airprint_server.xprinter_driver import (
     XPRINTER_MODEL_FILTERS,
     XPRINTER_PPD_MEMBERS,
     download_xprinter_package,
+    install_xprinter_driver,
     load_xprinter_payload,
+    remove_xprinter_driver,
 )
 
 
@@ -118,3 +123,65 @@ def test_downloads_pinned_xprinter_collection(
 
     assert downloaded.read_bytes() == content
     assert downloaded.stat().st_mode & 0o777 == 0o600
+
+
+def test_installs_only_xprinter_ppds_and_matching_filters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package, checksum = _package(tmp_path)
+    monkeypatch.setattr("airprint_server.xprinter_driver._require_root", lambda: None)
+    dependency = ("dpkg-query", "-W", "-f=${Status}", "libcupsimage2t64")
+    runner = FakeRunner(
+        {
+            dependency: CommandResult(dependency, 0, "install ok installed"),
+        }
+    )
+    state = State()
+    data_dir = tmp_path / "data"
+    filter_dir = tmp_path / "cups" / "filter"
+
+    installed = install_xprinter_driver(
+        runner,  # type: ignore[arg-type]
+        state,
+        package,
+        machine="aarch64",
+        os_version="13",
+        expected_deb_sha256=checksum,
+        data_dir=data_dir,
+        filter_dir=filter_dir,
+    )
+
+    assert set(installed.ppd_paths) == {"58", "76", "80"}
+    assert installed.ppd_paths["80"].read_bytes().startswith(b"*ModelName")
+    assert set(installed.filter_paths) == {"rastertosnailep", "rastertosnailep2"}
+    assert all(path.stat().st_mode & 0o777 == 0o755 for path in installed.filter_paths.values())
+    assert state.vendor_drivers["xprinter-pos-cups"]["version"] == "3.13.11"
+    assert ("systemctl", "reload-or-restart", "cups.service") in runner.calls
+
+
+def test_removes_only_recorded_xprinter_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("airprint_server.xprinter_driver._require_root", lambda: None)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    filter_dir = tmp_path / "cups" / "filter"
+    filter_dir.mkdir(parents=True)
+    details = {"version": "3.13.11", "architecture": "aarch64"}
+    paths: list[Path] = []
+    for model in ("58", "76", "80"):
+        path = data_dir / f"POS-{model}.ppd"
+        path.write_bytes(b"ppd")
+        details[f"ppd_{model}"] = str(path)
+        paths.append(path)
+    for name in set(XPRINTER_MODEL_FILTERS.values()):
+        path = filter_dir / f"{name}-pos"
+        path.write_bytes(b"filter")
+        details[f"filter_{name}"] = str(path)
+        paths.append(path)
+    state = State(vendor_drivers={"xprinter-pos-cups": details})
+
+    remove_xprinter_driver(state, data_dir=data_dir, filter_dir=filter_dir)
+
+    assert all(not path.exists() for path in paths)
+    assert "xprinter-pos-cups" not in state.vendor_drivers
