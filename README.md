@@ -22,6 +22,11 @@ available, and x86_64. The known working hardware path is:
 - Page size: `w226h842`
 - Resolution: 203 dpi
 
+The bundled `bixolon-srp-e300` profile supports the BIXOLON SRP-E300 through
+USB or raw socket printing. It explicitly applies `escCutter=1`, which makes
+rastertoescpos cut once after the complete CUPS job rather than after each
+page. This profile remains labelled `unverified` pending physical validation.
+
 Generic ESC/POS profiles are starting points, not a claim that every ESC/POS
 printer is compatible. Cutter behavior, printable width, USB enumeration, and
 vendor firmware vary. Installer compatibility checks cover Bookworm and

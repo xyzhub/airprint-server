@@ -1,0 +1,17 @@
+id: bixolon-srp-e300
+display_name: BIXOLON SRP-E300
+category: escpos
+status: unverified
+driver: drv:///escpos.drv/gp80160.ppd
+paper_width_mm: 80
+printable_width_mm: 72
+page_size: w226h842
+resolution: 203dpi
+color_model: Gray
+monochrome: true
+cutter: true
+supported_connections: [socket, usb]
+cups_options:
+  print-color-mode: monochrome
+  escCutter: "1"
+

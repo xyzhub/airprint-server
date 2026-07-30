@@ -39,3 +39,32 @@ IPP/IPPS uses `everywhere`, while non-IPP connections require a driver or PPD.
 Generic ESC/POS profiles are uncalibrated starting points. Test paper width,
 heat/density, raster output, feed, and cutter behavior on the exact firmware.
 
+## BIXOLON SRP-E300
+
+The `bixolon-srp-e300` profile uses the rastertoescpos 80 mm model and sets:
+
+```yaml
+cups_options:
+  escCutter: "1"
+```
+
+In rastertoescpos, `escCutter=1` emits one cut after every page in the CUPS
+raster stream has completed. This is a per-job cut. `escCutter=2` cuts from the
+page-finalization path and therefore cuts after every page. The SRP-E300 profile
+must not use value `2`.
+
+The profile is labelled `unverified` until output dimensions, raster quality,
+feed distance, and cutter behavior are confirmed on physical SRP-E300
+hardware.
+
+For an existing queue, inspect and change the effective CUPS option with:
+
+```sh
+lpoptions -p BIXOLON-SRP-E300 -l | grep escCutter
+sudo lpadmin -p BIXOLON-SRP-E300 -o escCutter=1
+```
+
+The direct `lpadmin` command takes effect immediately. To keep
+airprint-server's managed state aligned with that queue, update the application
+and run the setup wizard again with the same queue name and the
+`bixolon-srp-e300` profile.

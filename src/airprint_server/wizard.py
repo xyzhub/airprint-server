@@ -263,7 +263,9 @@ def _recommended_profile(
     if choice.device:
         device_text = f"{choice.device.manufacturer} {choice.device.model}".lower()
     preferred = "generic-driverless"
-    if "swisspos" in device_text or "spst80" in device_text:
+    if "bixolon" in device_text or "srp-e300" in device_text:
+        preferred = "bixolon-srp-e300"
+    elif "swisspos" in device_text or "spst80" in device_text:
         preferred = "swisspos-t80c"
     elif "xprinter" in device_text or "xp-" in device_text:
         preferred = "xprinter-80mm"

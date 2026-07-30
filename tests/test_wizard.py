@@ -67,6 +67,30 @@ def test_collect_xprinter_usb_uses_suggested_profile() -> None:
     )
 
 
+def test_collect_bixolon_usb_uses_job_cut_profile() -> None:
+    command = ("lpinfo", "-v")
+    runner = FakeRunner(
+        {
+            command: CommandResult(
+                command,
+                0,
+                "direct usb://BIXOLON/SRP-E300?serial=00000001\n",
+            )
+        }
+    )
+    input_fn, _ = answers("1", "1", "", "")
+    selection = collect_printer(
+        runner,  # type: ignore[arg-type]
+        load_profiles(),
+        input_fn=input_fn,  # type: ignore[arg-type]
+        output=lambda _message: None,
+    )
+    assert selection is not None
+    assert selection.profile == "bixolon-srp-e300"
+    assert selection.driver == "drv:///escpos.drv/gp80160.ppd"
+    assert selection.name == "BIXOLON-SRP-E300"
+
+
 def test_collect_generic_usb_suggests_installed_driver() -> None:
     devices = ("lpinfo", "-v")
     models = ("lpinfo", "-m")

@@ -23,7 +23,8 @@ printers may change which physical device receives a job.
 
 Next, the wizard lists only profiles that support the selected connection. It
 suggests SwissPOS, Xprinter, 58 mm, 80 mm, or general-purpose profiles from the
-detected device name, but the operator always makes the final selection.
+detected device name. A detected BIXOLON SRP-E300 selects its dedicated
+job-level cutter profile. The operator always makes the final selection.
 Generic ESC/POS profiles are not presented as universally compatible.
 
 Profiles with a built-in driver require no additional driver input. IPP/IPPS
@@ -58,4 +59,3 @@ sudo airprint-server install --wizard
 `--yes` skips the final queue confirmation but does not guess wizard choices.
 Use explicit `add-printer` arguments for completely non-interactive queue
 creation.
-

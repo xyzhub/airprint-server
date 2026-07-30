@@ -14,7 +14,19 @@ def test_bundled_profiles_and_options() -> None:
     assert swiss.driver == "drv:///escpos.drv/gp80160.ppd"
     assert swiss.default_options()["PageSize"] == "w226h842"
     assert swiss.default_options()["print-color-mode"] == "monochrome"
-    assert {"escpos-generic-58mm", "escpos-generic-80mm", "generic-driverless"} <= profiles.keys()
+    assert {
+        "bixolon-srp-e300",
+        "escpos-generic-58mm",
+        "escpos-generic-80mm",
+        "generic-driverless",
+    } <= profiles.keys()
+
+
+def test_bixolon_profile_cuts_once_per_job() -> None:
+    profile = load_profiles()["bixolon-srp-e300"]
+    assert profile.status == "unverified"
+    assert profile.cutter
+    assert profile.default_options()["escCutter"] == "1"
 
 
 def test_local_profile_overrides_bundled(tmp_path: Path) -> None:
@@ -49,4 +61,3 @@ def test_invalid_profiles(change: dict[str, object]) -> None:
     raw.update(change)
     with pytest.raises(ValidationError):
         PrinterProfile.from_mapping(raw)
-
