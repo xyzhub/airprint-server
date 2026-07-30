@@ -89,3 +89,57 @@ def test_install_bixolon_downloads_when_archive_is_omitted(
     assert main(["install-bixolon-driver", "--yes"]) == 0
     assert len(downloaded_to) == 1
     assert downloaded_to[0].name.startswith("airprint-server-bixolon-")
+
+
+def test_add_bixolon_downloads_official_driver_when_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ppd = tmp_path / "SRPE300.ppd"
+    ppd.write_text("*PPD-Adobe: \"4.3\"\n", encoding="utf-8")
+    filter_path = tmp_path / "rastertoBixolon"
+    archive = tmp_path / "driver.tgz"
+    configured: list[ManagedPrinter] = []
+    downloads: list[Path] = []
+    state = State()
+
+    def download(destination: Path) -> Path:
+        downloads.append(destination)
+        return archive
+
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+    monkeypatch.setattr("airprint_server.cli.cups.queue_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        "airprint_server.cli.cups.create_or_update_queue",
+        lambda _runner, printer: configured.append(printer),
+    )
+    monkeypatch.setattr("airprint_server.cli.download_bixolon_archive", download)
+    monkeypatch.setattr(
+        "airprint_server.cli.install_bixolon_driver",
+        lambda _runner, _state, selected: BixolonInstallation(
+            "1.5.9", "aarch64", ppd, filter_path
+        )
+        if selected == archive
+        else None,
+    )
+    monkeypatch.setattr("airprint_server.cli.save_state", lambda _state: None)
+    args = argparse.Namespace(
+        name="BIXOLON-SRP-E300",
+        description=None,
+        profile="bixolon-srp-e300",
+        connection="usb",
+        device_uri="usb://BIXOLON/SRP-E300?serial=00000001",
+        host=None,
+        port=9100,
+        disable_snmp=False,
+        driver="drv:///escpos.drv/gp80160.ppd",
+        ppd=None,
+        adopt=False,
+        yes=True,
+    )
+
+    cmd_add(args, FakeRunner(), state, load_profiles())  # type: ignore[arg-type]
+
+    assert len(downloads) == 1
+    assert configured[0].driver is None
+    assert configured[0].ppd == str(ppd)
+    assert configured[0].cups_options == BIXOLON_CUPS_OPTIONS

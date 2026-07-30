@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from airprint_server import DESCRIPTION, __version__, cups, installer
 from airprint_server.bixolon_driver import (
     BIXOLON_CUPS_OPTIONS,
+    BixolonInstallation,
     download_bixolon_archive,
     install_bixolon_driver,
     installed_bixolon_ppd,
@@ -52,6 +53,26 @@ def _root() -> None:
 
 def _confirm(message: str, yes: bool) -> bool:
     return yes or input(f"{message} [y/N] ").strip().lower() in {"y", "yes"}
+
+
+def _install_bixolon_source(
+    runner: Runner,
+    state: State,
+    archive: Path | None,
+) -> BixolonInstallation | None:
+    if archive is None and runner.dry_run:
+        print("Would download and verify BIXOLON Linux POS CUPS driver v1.5.9.")
+        return None
+    if archive is not None:
+        installed = install_bixolon_driver(runner, state, archive)
+    else:
+        print("Downloading the official BIXOLON Linux POS CUPS driver...")
+        with tempfile.TemporaryDirectory(prefix="airprint-server-bixolon-") as temporary:
+            downloaded = download_bixolon_archive(Path(temporary))
+            installed = install_bixolon_driver(runner, state, downloaded)
+    if not runner.dry_run:
+        save_state(state)
+    return installed
 
 
 def _profile(
@@ -108,16 +129,34 @@ def cmd_add(
             f"CUPS queue {name!r} already exists and is unmanaged; use adopt-printer first"
         )
     official_ppd = installed_bixolon_ppd(state)
+    can_use_automatic_bixolon = bool(
+        selected
+        and selected.id == "bixolon-srp-e300"
+        and not official_ppd
+        and not args.ppd
+        and (not args.driver or args.driver == selected.driver)
+    )
+    if can_use_automatic_bixolon and _confirm(
+        "Download and install BIXOLON's official driver under its license?",
+        args.yes,
+    ):
+        installed = _install_bixolon_source(runner, state, None)
+        if installed:
+            official_ppd = installed.ppd_path
     use_official_bixolon = bool(
         selected
         and selected.id == "bixolon-srp-e300"
         and official_ppd
-        and not args.driver
+        and (not args.driver or args.driver == selected.driver)
         and (not args.ppd or Path(args.ppd) == official_ppd)
     )
     ppd_source = args.ppd or (str(official_ppd) if use_official_bixolon else None)
     ppd = str(readable_ppd(ppd_source)) if ppd_source else None
-    driver = args.driver or (None if ppd else selected.driver if selected else None)
+    driver = (
+        None
+        if use_official_bixolon
+        else args.driver or (None if ppd else selected.driver if selected else None)
+    )
     options = (
         dict(BIXOLON_CUPS_OPTIONS)
         if use_official_bixolon
@@ -362,16 +401,9 @@ def _dispatch(args: argparse.Namespace) -> None:
         ):
             print("BIXOLON driver installation cancelled.")
             return
-        if args.archive is None and runner.dry_run:
-            print("Would download and verify BIXOLON Linux POS CUPS driver v1.5.9.")
+        installed = _install_bixolon_source(runner, state, args.archive)
+        if installed is None:
             return
-        if args.archive is None:
-            print("Downloading the official BIXOLON Linux POS CUPS driver...")
-            with tempfile.TemporaryDirectory(prefix="airprint-server-bixolon-") as temporary:
-                archive = download_bixolon_archive(Path(temporary))
-                installed = install_bixolon_driver(runner, state, archive)
-        else:
-            installed = install_bixolon_driver(runner, state, args.archive)
         if runner.dry_run:
             print(
                 f"Would install BIXOLON {installed.version} for {installed.architecture}: "
