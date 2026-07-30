@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import platform
+import stat
 import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from urllib.error import URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 from airprint_server.commands import Runner
 from airprint_server.config import State
@@ -17,6 +23,13 @@ from airprint_server.validation import ValidationError
 BIXOLON_VERSION = "1.5.9"
 BIXOLON_ARCHIVE = f"Software_BxlPOSCupsDrv_Linux_v{BIXOLON_VERSION}.tgz"
 BIXOLON_SHA256 = "6a081d40dfb62cd5a42a816b7e52f9628c20e3aca65c61564e9ebb0862a18d1e"
+BIXOLON_DOWNLOAD_URL = (
+    "https://www.bixolon.com/_lib/download_single.php?"
+    "FILE_INFO=driver%7Cdriver_file%7Cdriver_idx%7C118%7Cdriver"
+)
+BIXOLON_DOWNLOAD_SHA256 = (
+    "363245c3e7f0a0db343f05e15852a57532eea78b42054e97899f402774841dd1"
+)
 BIXOLON_ROOT = f"Software_BxlPOSCupsDrv_Linux_v{BIXOLON_VERSION}"
 BIXOLON_PPD_MEMBER = f"{BIXOLON_ROOT}/Bixolon/SRPE300_v1.0.3.ppd"
 BIXOLON_FILTER_MEMBERS = {
@@ -33,6 +46,7 @@ ARCHITECTURE_ALIASES = {
     "i386": "i686",
 }
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024
 MAX_MEMBER_BYTES = 16 * 1024 * 1024
 BIXOLON_DATA_DIR = Path("/var/lib/airprint-server/drivers/bixolon")
 BIXOLON_PPD_PATH = BIXOLON_DATA_DIR / "SRPE300_v1.0.3.ppd"
@@ -71,6 +85,80 @@ def _archive_sha256(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _fetch_bixolon_download() -> bytes:
+    request = Request(
+        BIXOLON_DOWNLOAD_URL,
+        headers={"User-Agent": "airprint-server/0.1 BIXOLON-driver-installer"},
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            final_url = urlsplit(response.geturl())
+            if final_url.scheme != "https" or final_url.hostname != "www.bixolon.com":
+                raise ValidationError("BIXOLON download redirected to an unexpected host")
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > MAX_DOWNLOAD_BYTES:
+                raise ValidationError("BIXOLON driver download exceeds the 16 MiB safety limit")
+            chunks: list[bytes] = []
+            received = 0
+            while chunk := response.read(1024 * 1024):
+                received += len(chunk)
+                if received > MAX_DOWNLOAD_BYTES:
+                    raise ValidationError(
+                        "BIXOLON driver download exceeds the 16 MiB safety limit"
+                    )
+                chunks.append(chunk)
+    except (OSError, URLError, ValueError) as exc:
+        raise ValidationError(f"cannot download BIXOLON driver: {exc}") from exc
+    return b"".join(chunks)
+
+
+def _safe_zip_member(member: zipfile.ZipInfo) -> bool:
+    path = PurePosixPath(member.filename)
+    unix_mode = member.external_attr >> 16
+    return (
+        not path.is_absolute()
+        and ".." not in path.parts
+        and not stat.S_ISLNK(unix_mode)
+        and member.file_size <= MAX_ARCHIVE_BYTES
+    )
+
+
+def download_bixolon_archive(
+    destination_dir: Path,
+    *,
+    expected_download_sha256: str = BIXOLON_DOWNLOAD_SHA256,
+    expected_archive_sha256: str = BIXOLON_SHA256,
+) -> Path:
+    """Download BIXOLON's official ZIP and safely extract the pinned driver archive."""
+    download = _fetch_bixolon_download()
+    if hashlib.sha256(download).hexdigest() != expected_download_sha256:
+        raise ValidationError(
+            "BIXOLON driver download checksum mismatch; the vendor package may have changed"
+        )
+    try:
+        with zipfile.ZipFile(io.BytesIO(download)) as package:
+            if any(not _safe_zip_member(member) for member in package.infolist()):
+                raise ValidationError("BIXOLON driver download contains an unsafe member")
+            try:
+                archive_info = package.getinfo(BIXOLON_ARCHIVE)
+            except KeyError as exc:
+                raise ValidationError(
+                    f"BIXOLON driver download is missing {BIXOLON_ARCHIVE}"
+                ) from exc
+            archive = package.read(archive_info)
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise ValidationError(f"cannot read BIXOLON driver download: {exc}") from exc
+    if hashlib.sha256(archive).hexdigest() != expected_archive_sha256:
+        raise ValidationError("downloaded BIXOLON driver archive checksum mismatch")
+    if destination_dir.is_symlink():
+        raise ValidationError(f"download destination is a symbolic link: {destination_dir}")
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / BIXOLON_ARCHIVE
+    staged = _stage_file(destination, archive, 0o600)
+    os.replace(staged, destination)
+    return destination
 
 
 def _safe_archive_member(member: tarfile.TarInfo) -> bool:
