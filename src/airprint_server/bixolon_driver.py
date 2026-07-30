@@ -12,7 +12,6 @@ from pathlib import Path, PurePosixPath
 
 from airprint_server.commands import Runner
 from airprint_server.config import State
-from airprint_server.installer import install_package_list, require_root
 from airprint_server.validation import ValidationError
 
 BIXOLON_VERSION = "1.5.9"
@@ -161,6 +160,23 @@ def _filter_destination(runner: Runner) -> Path:
     return server_bin / "filter" / BIXOLON_FILTER_NAME
 
 
+def _require_root() -> None:
+    if os.geteuid() != 0:
+        raise PermissionError("BIXOLON driver installation requires root; rerun with sudo")
+
+
+def _install_dependency(runner: Runner, state: State, package: str) -> None:
+    status = runner.run(
+        ["dpkg-query", "-W", "-f=${Status}", package],
+        check=False,
+    )
+    if status.stdout.strip() == "install ok installed":
+        return
+    runner.run(["apt-get", "update"])
+    runner.run(["apt-get", "install", "-y", "--no-install-recommends", package])
+    state.installed_packages = sorted(set(state.installed_packages).union({package}))
+
+
 def _host_version(os_release: Path = Path("/etc/os-release")) -> str:
     try:
         lines = os_release.read_text(encoding="utf-8").splitlines()
@@ -200,7 +216,7 @@ def install_bixolon_driver(
     filter_path: Path | None = None,
 ) -> BixolonInstallation:
     """Install only the validated SRP-E300 PPD and matching CUPS filter."""
-    require_root()
+    _require_root()
     payload = load_bixolon_payload(
         archive_path,
         machine=machine,
@@ -208,7 +224,7 @@ def install_bixolon_driver(
     )
     host_version = os_version or _host_version()
     dependency = "libcupsimage2t64" if host_version == "13" else "libcupsimage2"
-    install_package_list(runner, state, [dependency])
+    _install_dependency(runner, state, dependency)
     selected_filter_path = filter_path or _filter_destination(runner)
     selected_ppd_path = data_dir / BIXOLON_PPD_PATH.name
     installation = BixolonInstallation(
@@ -241,3 +257,38 @@ def install_bixolon_driver(
         "filter_path": str(selected_filter_path),
     }
     return installation
+
+
+def remove_bixolon_driver(
+    state: State,
+    *,
+    data_dir: Path = BIXOLON_DATA_DIR,
+    filter_path: Path | None = None,
+) -> None:
+    """Remove only paths previously managed by this integration."""
+    _require_root()
+    details = state.vendor_drivers.get("bixolon-pos-cups")
+    if not details:
+        return
+    recorded_ppd = Path(details.get("ppd_path", ""))
+    recorded_filter = Path(details.get("filter_path", ""))
+    expected_ppd = data_dir / BIXOLON_PPD_PATH.name
+    selected_filter = filter_path or recorded_filter
+    if recorded_ppd != expected_ppd or recorded_filter != selected_filter:
+        raise RuntimeError("refusing to remove unexpected BIXOLON driver paths")
+    if filter_path is None and not (
+        selected_filter.is_absolute()
+        and selected_filter.name == BIXOLON_FILTER_NAME
+        and selected_filter.parent.name == "filter"
+        and "cups" in selected_filter.parts
+        and selected_filter.parts[:2] == ("/", "usr")
+    ):
+        raise RuntimeError("refusing to remove BIXOLON filter outside the CUPS server directory")
+    for path in (recorded_ppd, selected_filter):
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to remove symbolic link: {path}")
+        if path.exists():
+            path.unlink()
+    if data_dir.exists() and not any(data_dir.iterdir()):
+        data_dir.rmdir()
+    del state.vendor_drivers["bixolon-pos-cups"]

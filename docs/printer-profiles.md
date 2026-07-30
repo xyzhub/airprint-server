@@ -41,6 +41,37 @@ heat/density, raster output, feed, and cutter behavior on the exact firmware.
 
 ## BIXOLON SRP-E300
 
+### Official BIXOLON driver
+
+The preferred configuration uses a user-supplied copy of BIXOLON Linux POS
+CUPS Driver v1.5.9:
+
+```sh
+sudo airprint-server install-bixolon-driver \
+  ./Software_BxlPOSCupsDrv_Linux_v1.5.9.tgz
+```
+
+The archive is not redistributed because of its vendor license. The command
+validates its SHA-256 and structure before installing the matching CPU filter
+and `SRPE300_v1.0.3.ppd`. Managed SRP-E300 queues can be migrated during the
+same operation with these official PPD defaults:
+
+```yaml
+PageSize: 61X72MMY70MM
+Resolution: 180dpi
+ColorModel: 1Gray
+PageType: 0Variable
+Dithering: 1True
+PageCut: 4JobCutFeed
+print-scaling-default: fit
+```
+
+`PageCut=4JobCutFeed` cuts and feeds once at the end of the job. Print
+darkness remains a persistent printer VMSM setting; the PPD does not expose
+thermal heat adjustment.
+
+### Generic fallback
+
 The SRP-E300 uses 79.5 mm roll paper but has a 72 mm print area at 180 dpi.
 The `bixolon-srp-e300` profile therefore uses a 72 mm custom CUPS page instead
 of rasterizing across the full roll width:

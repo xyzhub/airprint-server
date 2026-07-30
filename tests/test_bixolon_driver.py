@@ -14,6 +14,7 @@ from airprint_server.bixolon_driver import (
     BIXOLON_PPD_MEMBER,
     install_bixolon_driver,
     load_bixolon_payload,
+    remove_bixolon_driver,
 )
 from airprint_server.commands import CommandResult
 from airprint_server.config import State
@@ -71,7 +72,7 @@ def test_installs_only_validated_filter_and_ppd(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     archive, checksum = _archive(tmp_path)
-    monkeypatch.setattr("airprint_server.bixolon_driver.require_root", lambda: None)
+    monkeypatch.setattr("airprint_server.bixolon_driver._require_root", lambda: None)
     package = ("dpkg-query", "-W", "-f=${Status}", "libcupsimage2t64")
     runner = FakeRunner(
         {
@@ -99,3 +100,30 @@ def test_installs_only_validated_filter_and_ppd(
     assert state.vendor_drivers["bixolon-pos-cups"]["version"] == "1.5.9"
     assert ("systemctl", "reload-or-restart", "cups.service") in runner.calls
     assert BIXOLON_CUPS_OPTIONS["PageCut"] == "4JobCutFeed"
+
+
+def test_removes_only_recorded_driver_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("airprint_server.bixolon_driver._require_root", lambda: None)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    ppd = data_dir / "SRPE300_v1.0.3.ppd"
+    ppd.write_bytes(b"ppd")
+    filter_path = tmp_path / "cups" / "filter" / "rastertoBixolon"
+    filter_path.parent.mkdir(parents=True)
+    filter_path.write_bytes(b"filter")
+    state = State(
+        vendor_drivers={
+            "bixolon-pos-cups": {
+                "ppd_path": str(ppd),
+                "filter_path": str(filter_path),
+            }
+        }
+    )
+
+    remove_bixolon_driver(state, data_dir=data_dir, filter_path=filter_path)
+
+    assert not ppd.exists()
+    assert not filter_path.exists()
+    assert "bixolon-pos-cups" not in state.vendor_drivers

@@ -92,6 +92,34 @@ def test_collect_bixolon_usb_uses_job_cut_profile() -> None:
     assert selection.name == "BIXOLON-SRP-E300"
 
 
+def test_collect_bixolon_prefers_installed_vendor_ppd(tmp_path: Path) -> None:
+    command = ("lpinfo", "-v")
+    runner = FakeRunner(
+        {
+            command: CommandResult(
+                command,
+                0,
+                "direct usb://BIXOLON/SRP-E300?serial=00000001\n",
+            )
+        }
+    )
+    ppd = tmp_path / "SRPE300.ppd"
+    ppd.write_text("*PPD-Adobe: \"4.3\"\n", encoding="utf-8")
+    input_fn, _ = answers("1", "1", "", "")
+
+    selection = collect_printer(
+        runner,  # type: ignore[arg-type]
+        load_profiles(),
+        preferred_ppds={"bixolon-srp-e300": ppd},
+        input_fn=input_fn,  # type: ignore[arg-type]
+        output=lambda _message: None,
+    )
+
+    assert selection is not None
+    assert selection.driver is None
+    assert selection.ppd == str(ppd)
+
+
 def test_collect_generic_usb_suggests_installed_driver() -> None:
     devices = ("lpinfo", "-v")
     models = ("lpinfo", "-m")

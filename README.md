@@ -29,6 +29,20 @@ applies `escCutter=1`, which makes rastertoescpos cut once after the complete
 CUPS job rather than after each page. This profile remains labelled
 `unverified` pending physical validation.
 
+For the official BIXOLON Linux CUPS driver, download v1.5.9 from BIXOLON,
+copy the vendor archive to the Pi, update airprint-server, and install the
+validated local payload:
+
+```sh
+sudo airprint-server install-bixolon-driver \
+  ./Software_BxlPOSCupsDrv_Linux_v1.5.9.tgz
+```
+
+The command never runs BIXOLON's legacy setup script. It selects ARM64 or
+ARM32 automatically, installs only the SRP-E300 PPD and filter, and offers to
+migrate managed SRP-E300 queues. The official driver then supplies model-aware
+72 mm media, 180 dpi output, dithering, fit scaling, and one cut per job.
+
 Generic ESC/POS profiles are starting points, not a claim that every ESC/POS
 printer is compatible. Cutter behavior, printable width, USB enumeration, and
 vendor firmware vary. Installer compatibility checks cover Bookworm and

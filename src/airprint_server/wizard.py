@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from airprint_server.commands import Runner
@@ -316,9 +317,14 @@ def choose_driver(
     profile: PrinterProfile,
     connection: ConnectionChoice,
     *,
+    preferred_ppd: Path | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> tuple[str | None, str | None]:
+    if preferred_ppd is not None:
+        selected_ppd = str(readable_ppd(str(preferred_ppd)))
+        output(f"Using installed vendor PPD: {selected_ppd}")
+        return None, selected_ppd
     if profile.driver:
         output(f"Using profile driver: {profile.driver}")
         return profile.driver, None
@@ -379,6 +385,7 @@ def collect_printer(
     runner: Runner,
     profiles: dict[str, PrinterProfile],
     *,
+    preferred_ppds: Mapping[str, Path] | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> WizardSelection | None:
@@ -387,7 +394,12 @@ def collect_printer(
         return None
     profile = choose_profile(profiles, connection, input_fn=input_fn, output=output)
     driver, ppd = choose_driver(
-        runner, profile, connection, input_fn=input_fn, output=output
+        runner,
+        profile,
+        connection,
+        preferred_ppd=(preferred_ppds or {}).get(profile.id),
+        input_fn=input_fn,
+        output=output,
     )
     name = _validated(
         "CUPS queue name",
@@ -423,6 +435,7 @@ def run_wizard(
     profiles: dict[str, PrinterProfile],
     add_printer: Callable[[WizardSelection], None],
     *,
+    preferred_ppds: Mapping[str, Path] | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> None:
@@ -432,7 +445,11 @@ def run_wizard(
     output("The wizard will discover printers and create only the queues you confirm.")
     while True:
         selection = collect_printer(
-            runner, profiles, input_fn=input_fn, output=output
+            runner,
+            profiles,
+            preferred_ppds=preferred_ppds,
+            input_fn=input_fn,
+            output=output,
         )
         if selection is None:
             output("Setup wizard finished.")

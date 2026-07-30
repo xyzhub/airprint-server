@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from airprint_server import avahi, cups
+from airprint_server.bixolon_driver import remove_bixolon_driver
 from airprint_server.commands import Runner
 from airprint_server.config import (
     CONFIG_DIR,
@@ -245,6 +246,10 @@ def uninstall(
             if candidate.exists() and not runner.dry_run:
                 candidate.unlink()
         state.rastertoescpos_managed = False
+    if remove_escpos and "bixolon-pos-cups" in state.vendor_drivers and confirm(
+        "Remove the BIXOLON CUPS driver installed by this project?"
+    ):
+        remove_bixolon_driver(state)
     restore_ipp_usb(runner, state)
     if (
         remove_config

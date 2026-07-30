@@ -178,10 +178,6 @@ def cmd_setup(
     _root()
 
     def add_selection(selection: WizardSelection) -> None:
-        official_ppd = installed_bixolon_ppd(state)
-        use_official = selection.profile == "bixolon-srp-e300" and official_ppd is not None
-        if use_official:
-            print(f"Using installed official BIXOLON PPD: {official_ppd}")
         add_args = argparse.Namespace(
             name=selection.name,
             description=selection.description,
@@ -191,15 +187,17 @@ def cmd_setup(
             port=9100,
             disable_snmp=False,
             device_uri=selection.device_uri,
-            driver=None if use_official else selection.driver,
-            ppd=str(official_ppd) if use_official else selection.ppd,
+            driver=selection.driver,
+            ppd=selection.ppd,
             disable_ipp_usb=False,
             adopt=False,
             yes=args.yes,
         )
         cmd_add(add_args, runner, state, profiles)
 
-    run_wizard(runner, profiles, add_selection)
+    official_ppd = installed_bixolon_ppd(state)
+    preferred_ppds = {"bixolon-srp-e300": official_ppd} if official_ppd else None
+    run_wizard(runner, profiles, add_selection, preferred_ppds=preferred_ppds)
 
 
 def build_parser() -> argparse.ArgumentParser:
