@@ -29,18 +29,18 @@ applies `escCutter=1`, which makes rastertoescpos cut once after the complete
 CUPS job rather than after each page. This profile remains labelled
 `unverified` pending physical validation.
 
-For the official BIXOLON Linux CUPS driver, download v1.5.9 from BIXOLON,
-copy the vendor archive to the Pi, update airprint-server, and install the
-validated local payload:
+For the official BIXOLON Linux CUPS driver, run:
 
 ```sh
-sudo airprint-server install-bixolon-driver \
-  ./Software_BxlPOSCupsDrv_Linux_v1.5.9.tgz
+sudo airprint-server install-bixolon-driver
 ```
 
-The command never runs BIXOLON's legacy setup script. It selects ARM64 or
-ARM32 automatically, installs only the SRP-E300 PPD and filter, and offers to
-migrate managed SRP-E300 queues. The official driver then supplies model-aware
+The command downloads v1.5.9 directly from BIXOLON after license confirmation,
+verifies both the vendor ZIP and its inner driver archive against pinned
+SHA-256 checksums, and never runs BIXOLON's legacy setup script. It selects
+ARM64 or ARM32 automatically, installs only the SRP-E300 PPD and filter, and
+offers to migrate managed SRP-E300 queues. A local archive path can still be
+passed for offline installation. The official driver then supplies model-aware
 72 mm media, 180 dpi output, dithering, fit scaling, and one cut per job.
 
 Generic ESC/POS profiles are starting points, not a claim that every ESC/POS
@@ -48,10 +48,11 @@ printer is compatible. Cutter behavior, printable width, USB enumeration, and
 vendor firmware vary. Installer compatibility checks cover Bookworm and
 Trixie, but physical printer validation remains necessary.
 
-Proprietary vendor driver archives belong in the local [`drivers/`](drivers/)
-drop-in directory. They are ignored by Git and are not redistributed by this
-project; checked-in manifests record their expected source, version, checksum,
-and required model-specific files.
+Proprietary vendor driver archives are downloaded from the vendor when needed
+or can be placed in the local [`drivers/`](drivers/) drop-in directory for
+offline use. They are ignored by Git and are not redistributed by this project;
+checked-in manifests record their expected source, version, checksums, and
+required model-specific files.
 
 ## Installation
 
@@ -96,8 +97,9 @@ printer setup after installing the system components. The wizard:
    `ipp-usb`.
 2. Offers raw TCP socket, manual IPP/IPPS, LPD, and custom URI connections.
 3. Suggests an appropriate profile from the detected make and model.
-4. Uses the profile driver, suggests matching installed CUPS models, or asks
-   for a vendor PPD when necessary.
+4. Downloads and verifies the official BIXOLON driver after license
+   confirmation when an SRP-E300 needs it; otherwise uses the profile driver,
+   suggests matching installed CUPS models, or asks for a vendor PPD.
 5. Validates the queue name and AirPrint display name before showing the normal
    queue confirmation.
 6. Offers to configure additional printers.

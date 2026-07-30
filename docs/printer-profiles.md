@@ -43,18 +43,21 @@ heat/density, raster output, feed, and cutter behavior on the exact firmware.
 
 ### Official BIXOLON driver
 
-The preferred configuration uses a user-supplied copy of BIXOLON Linux POS
-CUPS Driver v1.5.9:
+The preferred configuration downloads BIXOLON Linux POS CUPS Driver v1.5.9
+directly from the vendor:
 
 ```sh
-sudo airprint-server install-bixolon-driver \
-  ./Software_BxlPOSCupsDrv_Linux_v1.5.9.tgz
+sudo airprint-server install-bixolon-driver
 ```
 
-The archive is not redistributed because of its vendor license. The command
-validates its SHA-256 and structure before installing the matching CPU filter
-and `SRPE300_v1.0.3.ppd`. Managed SRP-E300 queues can be migrated during the
-same operation with these official PPD defaults:
+The archive is not redistributed because of its vendor license. After license
+confirmation, the command validates the official download ZIP, inner archive,
+and archive structure before installing the matching CPU filter and
+`SRPE300_v1.0.3.ppd`. Passing a local `.tgz` path keeps offline installation
+available. The setup wizard performs the same download automatically when an
+SRP-E300 is selected and the official driver is missing. Managed SRP-E300
+queues can be migrated during the same operation with these official PPD
+defaults:
 
 ```yaml
 PageSize: 61X72MMY70MM
