@@ -171,3 +171,4 @@ def test_install_wizard_mode_defaults() -> None:
     assert parser.parse_args(
         ["install-bixolon-driver", "/tmp/bixolon.tgz"]
     ).archive == Path("/tmp/bixolon.tgz")
+    assert parser.parse_args(["install-bixolon-driver"]).archive is None

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from conftest import FakeRunner
 
-from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS
-from airprint_server.cli import cmd_add
+from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS, BixolonInstallation
+from airprint_server.cli import cmd_add, main
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.profiles import load_profiles
 
@@ -56,3 +56,36 @@ def test_add_bixolon_uses_installed_official_driver(
     assert configured[0].driver is None
     assert configured[0].ppd == str(ppd)
     assert configured[0].cups_options == BIXOLON_CUPS_OPTIONS
+
+
+def test_install_bixolon_downloads_when_archive_is_omitted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    downloaded_to: list[Path] = []
+    archive = tmp_path / "driver.tgz"
+    archive.write_bytes(b"archive")
+    ppd = tmp_path / "SRPE300.ppd"
+    filter_path = tmp_path / "rastertoBixolon"
+    state = State()
+
+    def download(destination: Path) -> Path:
+        downloaded_to.append(destination)
+        return archive
+
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+    monkeypatch.setattr("airprint_server.cli.load_state", lambda: state)
+    monkeypatch.setattr("airprint_server.cli.load_profiles", lambda _path: {})
+    monkeypatch.setattr("airprint_server.cli.download_bixolon_archive", download)
+    monkeypatch.setattr(
+        "airprint_server.cli.install_bixolon_driver",
+        lambda _runner, _state, selected: BixolonInstallation(
+            "1.5.9", "aarch64", ppd, filter_path
+        )
+        if selected == archive
+        else None,
+    )
+    monkeypatch.setattr("airprint_server.cli.save_state", lambda _state: None)
+
+    assert main(["install-bixolon-driver", "--yes"]) == 0
+    assert len(downloaded_to) == 1
+    assert downloaded_to[0].name.startswith("airprint-server-bixolon-")

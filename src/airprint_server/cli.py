@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from airprint_server import DESCRIPTION, __version__, cups, installer
 from airprint_server.bixolon_driver import (
     BIXOLON_CUPS_OPTIONS,
+    download_bixolon_archive,
     install_bixolon_driver,
     installed_bixolon_ppd,
 )
@@ -264,9 +265,14 @@ def build_parser() -> argparse.ArgumentParser:
     bixolon = sub.add_parser(
         "install-bixolon-driver",
         parents=[common],
-        help="install a user-supplied official BIXOLON Linux CUPS driver archive",
+        help="download and install the official BIXOLON Linux CUPS driver",
     )
-    bixolon.add_argument("archive", type=Path)
+    bixolon.add_argument(
+        "archive",
+        type=Path,
+        nargs="?",
+        help="optional local v1.5.9 archive; otherwise download it from BIXOLON",
+    )
     test = sub.add_parser("test", parents=[common])
     test.add_argument("--printer", required=True)
     test.add_argument("--test-cutter", action="store_true")
@@ -351,12 +357,21 @@ def _dispatch(args: argparse.Namespace) -> None:
     elif args.command == "install-bixolon-driver":
         _root()
         if not _confirm(
-            "Install BIXOLON's proprietary driver under the license included in the archive?",
+            "Download if needed and install BIXOLON's proprietary driver under its license?",
             args.yes,
         ):
             print("BIXOLON driver installation cancelled.")
             return
-        installed = install_bixolon_driver(runner, state, args.archive)
+        if args.archive is None and runner.dry_run:
+            print("Would download and verify BIXOLON Linux POS CUPS driver v1.5.9.")
+            return
+        if args.archive is None:
+            print("Downloading the official BIXOLON Linux POS CUPS driver...")
+            with tempfile.TemporaryDirectory(prefix="airprint-server-bixolon-") as temporary:
+                archive = download_bixolon_archive(Path(temporary))
+                installed = install_bixolon_driver(runner, state, archive)
+        else:
+            installed = install_bixolon_driver(runner, state, args.archive)
         if runner.dry_run:
             print(
                 f"Would install BIXOLON {installed.version} for {installed.architecture}: "
