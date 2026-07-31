@@ -2,6 +2,13 @@
 *.tgz
 *.tar.gz
 *.zip
+*.rar
+*.deb
 
 # Ignore extracted BIXOLON packages as well as their original archives.
 Software_BxlPOSCupsDrv_Linux_v*/
+
+# Ignore legacy XPrinter self-extracting proprietary installers.
+XP-58
+XP-76
+XP-80

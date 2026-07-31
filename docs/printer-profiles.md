@@ -39,6 +39,40 @@ IPP/IPPS uses `everywhere`, while non-IPP connections require a driver or PPD.
 Generic ESC/POS profiles are uncalibrated starting points. Test paper width,
 heat/density, raster output, feed, and cutter behavior on the exact firmware.
 
+## XPrinter POS-58, POS-76, and POS-80
+
+The XPrinter profiles prefer the current official POS CUPS Driver v3.13.11:
+
+```sh
+sudo airprint-server install-xprinter-driver
+```
+
+After license confirmation, the command downloads XPrinter's official driver
+collection, verifies both its RAR and inner Debian package, and selects the
+native ARM64, ARMv7, x86-64, or i386 filters. It reads the Debian package as an
+archive and installs only the POS-58, POS-76, and POS-80 PPDs plus their two
+required filters. It does not execute the vendor `postinst`, create its
+once-per-minute root cron task, append USB quirks, or create queues outside
+airprint-server's managed workflow.
+
+The setup wizard offers the same verified installation when an XPrinter
+profile is selected and the driver is missing. A local official `.rar` or
+`printer-driver-pos_3.13.11_all.deb` can be passed for offline use.
+
+For POS-80 queues, airprint-server overrides the PPD's page-cut default so
+multi-page jobs do not cut after every page:
+
+```yaml
+PageCutType: 0NoCutPage
+DocCutType: 1PartialCutDoc
+FeedCutAfterJobEnd: 4Line
+```
+
+The older `cupsdrv-2.4.0` XP-58, XP-76, and XP-80 self-extracting installers
+contain only Intel Linux binaries. They cannot run on a Raspberry Pi. Their
+checksums are recorded in `drivers/xprinter-pos-cups-legacy-v2.4.0.yaml`, but
+the files are not redistributed.
+
 ## BIXOLON SRP-E300
 
 ### Official BIXOLON driver

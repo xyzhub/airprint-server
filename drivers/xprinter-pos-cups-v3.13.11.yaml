@@ -1,0 +1,17 @@
+id: xprinter-pos-cups
+version: 3.13.11
+source: https://www.xprintertech.com/download.html
+download_url: https://www.xprintertech.com/bill-product-driver-1
+download_archive: xprinter-bill-driver-3.13.11.rar
+download_sha256: 39afd0b209c5ac5cb589318174f312830978e27a8a63ae59f6f1650fddc51a6a
+debian_package: printer-driver-pos_3.13.11_all.deb
+debian_package_sha256: 292061819d381541f1fd2318386382f3cc63484b36e85d9c5603be1b4b68853c
+redistributable: false
+supported_architectures: [arm64, armhf, amd64, i386]
+installed_models:
+  - POS-58
+  - POS-76
+  - POS-80
+installed_filters:
+  - rastertosnailep-pos
+  - rastertosnailep2-pos

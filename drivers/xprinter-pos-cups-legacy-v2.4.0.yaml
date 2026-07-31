@@ -1,0 +1,10 @@
+id: xprinter-pos-cups-legacy
+version: 2.4.0
+redistributable: false
+raspberry_pi_supported: false
+reason: The Linux filters are Intel i386 and x86-64 executables only.
+files:
+  XP-58: 4d942fa0a9cb16b564ae2d0e3a8863d48c1dd7a0ddb149bc7eb8089a8f1f4855
+  XP-76: 999865f1772f8c493302d5610ebeeca5108251dee74d221f7756f5a03f090538
+  XP-80: e878d2d00b2dcdf42e62300a447a5d305e1121a7ae0591d50e6ed67aceca5b92
+replacement: xprinter-pos-cups-v3.13.11.yaml

@@ -50,3 +50,37 @@ removal patterns for previously installed BIXOLON files and legacy logic that
 can replace the system CUPS USB backend. airprint-server integration should
 instead be used so only the exact model PPD and architecture-specific filter
 are installed.
+
+## XPrinter POS CUPS driver
+
+Install the current ARM-capable XPrinter driver directly from the
+[official XPrinter download page](https://www.xprintertech.com/download.html):
+
+```sh
+sudo airprint-server install-xprinter-driver
+```
+
+The EULA inside v3.13.11 expressly prohibits redistribution outside the
+licensee's organization. Consequently, the repository stores only
+[`xprinter-pos-cups-v3.13.11.yaml`](xprinter-pos-cups-v3.13.11.yaml), while the
+installer downloads the proprietary RAR from XPrinter after confirmation.
+Both the RAR and its inner Debian package are checksum-verified.
+
+For offline installation, pass a previously downloaded official RAR or its
+inner Debian package:
+
+```sh
+sudo airprint-server install-xprinter-driver \
+  drivers/printer-driver-pos_3.13.11_all.deb
+```
+
+The integration does not install the Debian package directly. It safely reads
+the package and installs only the architecture-specific filters and POS-58,
+POS-76, and POS-80 PPDs, avoiding the vendor maintainer script's unrelated
+cron, USB-quirk, and automatic-queue changes.
+
+The supplied 2019 `cupsdrv-2.4.0` XP-58, XP-76, and XP-80 installers contain
+only i386 and x86-64 Linux filters and cannot run on Raspberry Pi. Their hashes
+and replacement are documented in
+[`xprinter-pos-cups-legacy-v2.4.0.yaml`](xprinter-pos-cups-legacy-v2.4.0.yaml);
+the proprietary files remain ignored by Git.

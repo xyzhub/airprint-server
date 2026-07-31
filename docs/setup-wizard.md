@@ -22,13 +22,13 @@ URI. A missing serial number is called out because reconnecting identical
 printers may change which physical device receives a job.
 
 Next, the wizard lists only profiles that support the selected connection. It
-suggests SwissPOS, Xprinter, 58 mm, 80 mm, or general-purpose profiles from the
+suggests SwissPOS, XPrinter 58/76/80 mm, or general-purpose profiles from the
 detected device name. A detected BIXOLON SRP-E300 selects its dedicated
-job-level cutter profile. If its official driver is not installed, queue setup
-offers to download it directly from BIXOLON, verifies the pinned package
-checksums, and installs only the matching PPD and CPU filter. The operator
-always makes the final selection. Generic ESC/POS profiles are not presented
-as universally compatible.
+job-level cutter profile. If an official BIXOLON or XPrinter driver is not
+installed, queue setup offers to download it directly from the vendor, verifies
+the pinned package checksums, and installs only the matching PPD and CPU
+filter. The operator always makes the final selection. Generic ESC/POS
+profiles are not presented as universally compatible.
 
 Profiles with a built-in driver require no additional driver input. IPP/IPPS
 uses CUPS IPP Everywhere. For other general-purpose printers, the wizard

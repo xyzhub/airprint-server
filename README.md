@@ -43,6 +43,19 @@ offers to migrate managed SRP-E300 queues. A local archive path can still be
 passed for offline installation. The official driver then supplies model-aware
 72 mm media, 180 dpi output, dithering, fit scaling, and one cut per job.
 
+XPrinter POS-58, POS-76, and POS-80 printers can use XPrinter's current
+ARM-capable v3.13.11 driver:
+
+```sh
+sudo airprint-server install-xprinter-driver
+```
+
+The command downloads the collection from XPrinter after license confirmation,
+checks the RAR and inner Debian package against pinned SHA-256 values, and
+installs only the three PPDs and the two filters required by them. It never
+executes the vendor package's maintainer scripts. The setup wizard performs
+this installation automatically when an XPrinter profile needs it.
+
 Generic ESC/POS profiles are starting points, not a claim that every ESC/POS
 printer is compatible. Cutter behavior, printable width, USB enumeration, and
 vendor firmware vary. Installer compatibility checks cover Bookworm and
@@ -97,9 +110,9 @@ printer setup after installing the system components. The wizard:
    `ipp-usb`.
 2. Offers raw TCP socket, manual IPP/IPPS, LPD, and custom URI connections.
 3. Suggests an appropriate profile from the detected make and model.
-4. Downloads and verifies the official BIXOLON driver after license
-   confirmation when an SRP-E300 needs it; otherwise uses the profile driver,
-   suggests matching installed CUPS models, or asks for a vendor PPD.
+4. Downloads and verifies the official BIXOLON or XPrinter driver after license
+   confirmation when a selected profile needs it; otherwise uses the profile
+   driver, suggests matching installed CUPS models, or asks for a vendor PPD.
 5. Validates the queue name and AirPrint display name before showing the normal
    queue confirmation.
 6. Offers to configure additional printers.
