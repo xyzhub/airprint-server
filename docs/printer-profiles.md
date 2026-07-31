@@ -94,7 +94,7 @@ queues can be migrated during the same operation with these official PPD
 defaults:
 
 ```yaml
-PageSize: 61X72MMY70MM
+PageSize: 80X80MMY70MM
 Resolution: 180dpi
 ColorModel: 1Gray
 PageType: 0Variable
@@ -106,6 +106,13 @@ print-scaling-default: fit
 `PageCut=4JobCutFeed` cuts and feeds once at the end of the job. Print
 darkness remains a persistent printer VMSM setting; the PPD does not expose
 thermal heat adjustment.
+
+The 80 mm logical roll width is intentional even though the printer has a
+centered 72 mm physical print head. The official PPD declares the complete
+80 mm page imageable and its model-specific filter handles the print area.
+Using its 72 mm logical media option adds application margins inside that
+width and then adds the printer's physical inset again, producing margins
+close to 10 mm in common AirPrint jobs.
 
 ### Generic fallback
 

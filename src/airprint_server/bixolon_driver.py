@@ -52,7 +52,11 @@ BIXOLON_DATA_DIR = Path("/var/lib/airprint-server/drivers/bixolon")
 BIXOLON_PPD_PATH = BIXOLON_DATA_DIR / "SRPE300_v1.0.3.ppd"
 BIXOLON_FILTER_NAME = "rastertoBixolon"
 BIXOLON_CUPS_OPTIONS = {
-    "PageSize": "61X72MMY70MM",
+    # Use the physical 80 mm roll as the logical page. The vendor PPD exposes
+    # the complete page as imageable and its filter maps that page to the
+    # SRP-E300's centered 72 mm print head. Selecting a 72 mm logical page
+    # instead stacks application margins on top of the hardware inset.
+    "PageSize": "80X80MMY70MM",
     "Resolution": "180dpi",
     "ColorModel": "1Gray",
     "PageType": "0Variable",

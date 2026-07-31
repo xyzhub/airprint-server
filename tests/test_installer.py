@@ -10,6 +10,7 @@ from airprint_server.installer import (
     RUNTIME_PACKAGES,
     install,
     ipp_usb_state,
+    migrate_managed_printer_defaults,
     operating_system,
     uninstall,
 )
@@ -81,6 +82,73 @@ def test_unsupported_release_is_rejected(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert operating_system(os_release) == (False, "Future Raspberry Pi OS")
+
+
+def test_migrates_legacy_bixolon_media_width(tmp_path: Path) -> None:
+    ppd_path = tmp_path / "SRPE300_v1.0.3.ppd"
+    ppd_path.write_text('*PPD-Adobe: "4.3"\n', encoding="ascii")
+    ppd = str(ppd_path)
+    printer = ManagedPrinter(
+        "Receipt",
+        "Receipt",
+        "bixolon-srp-e300",
+        "usb://BIXOLON/SRP-E300?serial=1",
+        "usb",
+        ppd=ppd,
+        cups_options={
+            "PageSize": "61X72MMY70MM",
+            "PageCut": "4JobCutFeed",
+        },
+    )
+    state = State(
+        printers={"Receipt": printer},
+        vendor_drivers={"bixolon-pos-cups": {"ppd_path": ppd}},
+    )
+    exists = ("lpstat", "-p", "Receipt")
+    options = ("lpoptions", "-p", "Receipt")
+    runner = FakeRunner(
+        {
+            exists: CommandResult(exists, 0),
+            options: CommandResult(options, 0, "PageSize=61X72MMY70MM PageCut=4JobCutFeed"),
+        }
+    )
+
+    assert migrate_managed_printer_defaults(runner, state) == ["Receipt"]  # type: ignore[arg-type]
+    assert printer.cups_options["PageSize"] == "80X80MMY70MM"
+    assert any(
+        call[:3] == ("lpadmin", "-p", "Receipt")
+        and "PageSize=80X80MMY70MM" in call
+        for call in runner.calls
+    )
+
+
+def test_bixolon_media_migration_preserves_effective_user_override() -> None:
+    ppd = "/var/lib/airprint-server/drivers/bixolon/SRPE300_v1.0.3.ppd"
+    printer = ManagedPrinter(
+        "Receipt",
+        "Receipt",
+        "bixolon-srp-e300",
+        "usb://BIXOLON/SRP-E300?serial=1",
+        "usb",
+        ppd=ppd,
+        cups_options={"PageSize": "61X72MMY70MM"},
+    )
+    state = State(
+        printers={"Receipt": printer},
+        vendor_drivers={"bixolon-pos-cups": {"ppd_path": ppd}},
+    )
+    exists = ("lpstat", "-p", "Receipt")
+    options = ("lpoptions", "-p", "Receipt")
+    runner = FakeRunner(
+        {
+            exists: CommandResult(exists, 0),
+            options: CommandResult(options, 0, "PageSize=Custom.76x297mm"),
+        }
+    )
+
+    assert migrate_managed_printer_defaults(runner, state) == []  # type: ignore[arg-type]
+    assert printer.cups_options["PageSize"] == "61X72MMY70MM"
+    assert not any(call and call[0] == "lpadmin" for call in runner.calls)
 
 
 def test_safe_uninstall_only_managed_queue(monkeypatch: object, tmp_path: Path) -> None:

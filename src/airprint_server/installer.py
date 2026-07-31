@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from airprint_server import avahi, cups
-from airprint_server.bixolon_driver import remove_bixolon_driver
+from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS, remove_bixolon_driver
 from airprint_server.commands import Runner
 from airprint_server.config import (
     CONFIG_DIR,
@@ -39,6 +39,7 @@ SUPPORTED_IDS = {"debian", "raspbian"}
 SUPPORTED_VERSIONS = {"12", "13"}
 INSTALL_PHASES = 7
 InstallProgress = Callable[[int, str], None]
+LEGACY_BIXOLON_PAGE_SIZE = "61X72MMY70MM"
 
 
 def _report(progress: InstallProgress | None, completed: int, label: str) -> None:
@@ -129,6 +130,30 @@ def restore_ipp_usb(runner: Runner, state: State) -> None:
     state.ipp_usb_previous = None
 
 
+def migrate_managed_printer_defaults(runner: Runner, state: State) -> list[str]:
+    """Apply narrowly scoped profile corrections without replacing user overrides."""
+    migrated: list[str] = []
+    bixolon = state.vendor_drivers.get("bixolon-pos-cups", {})
+    official_ppd = bixolon.get("ppd_path")
+    if not official_ppd:
+        return migrated
+    for printer in state.printers.values():
+        if (
+            printer.profile != "bixolon-srp-e300"
+            or printer.ppd != official_ppd
+            or printer.cups_options.get("PageSize") != LEGACY_BIXOLON_PAGE_SIZE
+            or not cups.queue_exists(runner, printer.name)
+        ):
+            continue
+        effective = cups.printer_attributes(runner, printer.name)
+        if effective.get("PageSize") != LEGACY_BIXOLON_PAGE_SIZE:
+            continue
+        printer.cups_options["PageSize"] = BIXOLON_CUPS_OPTIONS["PageSize"]
+        cups.create_or_update_queue(runner, printer)
+        migrated.append(printer.name)
+    return migrated
+
+
 def rastertoescpos_presence(runner: Runner) -> tuple[bool, bool]:
     filter_result = runner.run(
         ["find", "/usr/lib/cups/filter", "/usr/libexec/cups/filter", "-name", "rastertoescpos"],
@@ -210,8 +235,9 @@ def install(
         if not independently_present:
             state.rastertoescpos_managed = True
             state.rastertoescpos_source = "https://github.com/chunlinyao/rastertoescpos"
-    _report(progress, 6, "Saving installation state")
+    _report(progress, 6, "Updating managed printer defaults")
     if not runner.dry_run:
+        migrate_managed_printer_defaults(runner, state)
         save_state(state)
     _report(progress, INSTALL_PHASES, "Installation complete")
 

@@ -160,6 +160,7 @@ def test_installs_only_validated_filter_and_ppd(
     assert installed.filter_path.stat().st_mode & 0o777 == 0o755
     assert state.vendor_drivers["bixolon-pos-cups"]["version"] == "1.5.9"
     assert ("systemctl", "reload-or-restart", "cups.service") in runner.calls
+    assert BIXOLON_CUPS_OPTIONS["PageSize"] == "80X80MMY70MM"
     assert BIXOLON_CUPS_OPTIONS["PageCut"] == "4JobCutFeed"
 
 

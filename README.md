@@ -40,8 +40,10 @@ verifies both the vendor ZIP and its inner driver archive against pinned
 SHA-256 checksums, and never runs BIXOLON's legacy setup script. It selects
 ARM64 or ARM32 automatically, installs only the SRP-E300 PPD and filter, and
 offers to migrate managed SRP-E300 queues. A local archive path can still be
-passed for offline installation. The official driver then supplies model-aware
-72 mm media, 180 dpi output, dithering, fit scaling, and one cut per job.
+passed for offline installation. The official driver uses an 80 mm logical
+media page mapped to the model's centered 72 mm print head. This avoids
+stacking application margins on top of a second software-created inset while
+retaining 180 dpi output, dithering, fit scaling, and one cut per job.
 
 XPrinter POS-58, POS-76, and POS-80 printers can use XPrinter's current
 ARM-capable v3.13.11 driver:
