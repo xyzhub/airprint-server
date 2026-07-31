@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,11 @@ from airprint_server.cli import cmd_add, main
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.profiles import load_profiles
 from airprint_server.xprinter_driver import XPRINTER_CUPS_OPTIONS, XPrinterInstallation
+
+
+class _InteractiveInput:
+    def isatty(self) -> bool:
+        return True
 
 
 def test_add_bixolon_uses_installed_official_driver(
@@ -285,3 +291,14 @@ def test_add_xprinter_downloads_official_driver_when_missing(
     assert configured[0].driver is None
     assert configured[0].ppd == str(ppd_paths["58"])
     assert configured[0].cups_options == XPRINTER_CUPS_OPTIONS["58"]
+
+
+def test_running_utility_without_command_starts_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatched: list[argparse.Namespace] = []
+    monkeypatch.setattr(sys, "stdin", _InteractiveInput())
+    monkeypatch.setattr("airprint_server.cli._dispatch", dispatched.append)
+
+    assert main([]) == 0
+    assert dispatched[0].command == "setup"

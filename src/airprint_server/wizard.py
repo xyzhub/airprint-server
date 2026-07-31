@@ -448,6 +448,7 @@ def run_wizard(
     output("airprint-server setup wizard")
     output("============================")
     output("The wizard will discover printers and create only the queues you confirm.")
+    output("Supported vendor drivers will be offered for download when they are needed.")
     while True:
         selection = collect_printer(
             runner,

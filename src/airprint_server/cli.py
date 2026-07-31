@@ -615,7 +615,10 @@ def _dispatch(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    selected_argv = list(sys.argv[1:] if argv is None else argv)
+    if not selected_argv and sys.stdin.isatty():
+        selected_argv = ["setup"]
+    args = parser.parse_args(selected_argv)
     level = logging.DEBUG if args.verbose > 1 else logging.INFO if args.verbose else logging.WARNING
     logging.basicConfig(level=level, format="%(levelname)s airprint-server: %(message)s")
     try:
