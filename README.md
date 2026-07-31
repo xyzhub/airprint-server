@@ -120,8 +120,13 @@ printer setup after installing the system components. The wizard:
 Run the wizard again at any time:
 
 ```sh
-sudo airprint-server setup
+sudo airprint-server
 ```
+
+Running the utility without a command opens the interactive setup wizard. It
+offers to download and install any supported vendor driver when the selected
+printer needs one, so normal setup does not require a separate driver command.
+`sudo airprint-server setup` remains available as the explicit equivalent.
 
 For unattended provisioning, skip interaction:
 

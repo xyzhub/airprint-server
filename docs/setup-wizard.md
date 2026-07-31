@@ -4,8 +4,13 @@ The setup wizard is launched automatically by `sudo ./install.sh` when
 standard input is a terminal. It can also be started independently:
 
 ```sh
-sudo airprint-server setup
+sudo airprint-server
 ```
+
+No separate driver command is required. After a printer and profile are
+selected, the utility prompts to download and install the supported official
+driver if it is missing. `sudo airprint-server setup` is the explicit
+equivalent of running the utility without a command.
 
 ## Guided flow
 
