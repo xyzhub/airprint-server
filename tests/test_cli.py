@@ -8,7 +8,7 @@ import pytest
 from conftest import FakeRunner
 
 from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS, BixolonInstallation
-from airprint_server.cli import cmd_add, main
+from airprint_server.cli import build_parser, cmd_add, main
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.profiles import load_profiles
 from airprint_server.xprinter_driver import XPRINTER_CUPS_OPTIONS, XPrinterInstallation
@@ -302,3 +302,63 @@ def test_running_utility_without_command_starts_setup(
 
     assert main([]) == 0
     assert dispatched[0].command == "setup"
+
+
+def test_add_printer_records_requested_raw_listener(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = State(raw_proxy_service_managed=True)
+    configured: list[ManagedPrinter] = []
+    reconciled: list[int | None] = []
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+    monkeypatch.setattr("airprint_server.cli.cups.queue_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        "airprint_server.cli.cups.create_or_update_queue",
+        lambda _runner, printer: configured.append(printer),
+    )
+    monkeypatch.setattr("airprint_server.cli.save_state", lambda _state: None)
+    monkeypatch.setattr(
+        "airprint_server.cli.raw_proxy.reconcile_service",
+        lambda _runner, current: reconciled.append(current.printers["Receipt"].raw_port),
+    )
+    args = argparse.Namespace(
+        name="Receipt",
+        description=None,
+        profile="escpos-generic-80mm",
+        connection="usb",
+        device_uri="usb://Vendor/Receipt?serial=1",
+        host=None,
+        port=9100,
+        raw_port=9100,
+        disable_snmp=False,
+        driver=None,
+        ppd=None,
+        adopt=False,
+        yes=True,
+    )
+
+    cmd_add(args, FakeRunner(), state, load_profiles())  # type: ignore[arg-type]
+
+    assert configured[0].raw_port == 9100
+    assert reconciled == [9100]
+
+
+def test_raw_exposure_commands_parse_valid_ports() -> None:
+    parser = build_parser()
+    assert parser.parse_args(["expose-raw", "Receipt"]).port is None
+    assert parser.parse_args(["expose-raw", "Receipt", "--port", "9101"]).port == 9101
+    assert parser.parse_args(["unexpose-raw", "Receipt"]).printer == "Receipt"
+
+
+def test_raw_service_command_does_not_read_root_only_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "raw-proxy.yaml"
+    config.write_text("version: 1\nlisteners: []\n", encoding="utf-8")
+    served: list[Path] = []
+    monkeypatch.setattr(
+        "airprint_server.cli.load_state",
+        lambda: pytest.fail("serve-raw must not read the root-only state file"),
+    )
+    monkeypatch.setattr("airprint_server.cli.raw_proxy.serve_config", served.append)
+
+    assert main(["serve-raw", "--config", str(config)]) == 0
+    assert served == [config]

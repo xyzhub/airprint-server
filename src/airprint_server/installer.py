@@ -9,7 +9,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from airprint_server import avahi, cups
+from airprint_server import avahi, cups, raw_proxy
 from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS, remove_bixolon_driver
 from airprint_server.commands import Runner
 from airprint_server.config import (
@@ -194,6 +194,7 @@ def install(
     _report(progress, 2, "Preparing airprint-server configuration")
     if not runner.dry_run:
         initialize_config()
+        raw_proxy.install_service(runner, state)
     _report(progress, 3, "Starting CUPS and Avahi services")
     avahi.ensure_services(runner)
     _report(progress, 4, "Configuring CUPS printer sharing")
@@ -253,6 +254,7 @@ def uninstall(
     confirm: Callable[[str], bool],
 ) -> None:
     require_root()
+    raw_proxy.remove_service(runner, state)
     if remove_queues and state.printers and confirm(
         f"Remove {len(state.printers)} managed CUPS queue(s)?"
     ):

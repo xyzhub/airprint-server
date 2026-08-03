@@ -41,8 +41,13 @@ searches `lpinfo -m` for models matching the detected manufacturer and model.
 The operator can instead enter an installed model URI or a trusted vendor
 `.ppd`/`.ppd.gz` path.
 
-Finally, the wizard validates the queue name and AirPrint display name and
-passes the result through the same managed-queue confirmation used by
+Finally, the wizard validates the queue name and AirPrint display name. It then
+asks whether to expose the queue as a raw TCP/JetDirect network printer. The
+first exposed printer defaults to port 9100; because one Pi address cannot map
+two queues to the same TCP port, later printers default to 9101, 9102, and so
+on. Raw exposure remains opt-in because the protocol is unauthenticated.
+
+The result passes through the same managed-queue confirmation used by
 `add-printer`. It never creates or changes a queue that the operator does not
 confirm.
 

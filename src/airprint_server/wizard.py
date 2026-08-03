@@ -51,6 +51,7 @@ class WizardSelection:
     device_uri: str
     driver: str | None
     ppd: str | None
+    raw_port: int | None = None
 
 
 def parse_driver_models(output: str) -> list[DriverModel]:
@@ -391,6 +392,8 @@ def collect_printer(
     profiles: dict[str, PrinterProfile],
     *,
     preferred_ppds: Mapping[str, Path] | None = None,
+    used_raw_ports: set[int] | None = None,
+    raw_port_owners: Mapping[int, str] | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> WizardSelection | None:
@@ -420,6 +423,35 @@ def collect_printer(
         input_fn=input_fn,
         output=output,
     )
+    raw_port: int | None = None
+    occupied = set(used_raw_ports or ())
+    occupied.update(
+        number for number, owner in (raw_port_owners or {}).items() if owner != name
+    )
+    if _yes_no(
+        "Expose this queue as a raw TCP/JetDirect network printer?",
+        default=False,
+        input_fn=input_fn,
+    ):
+        suggested = next(
+            candidate for candidate in range(9100, 65536) if candidate not in occupied
+        )
+
+        def available_raw_port(value: str) -> int:
+            selected = port(value)
+            if selected in occupied:
+                raise ValidationError(f"raw TCP port {selected} is already assigned")
+            return selected
+
+        raw_port = int(
+            _validated(
+                "Raw TCP listen port",
+                available_raw_port,
+                default=str(suggested),
+                input_fn=input_fn,
+                output=output,
+            )
+        )
     return WizardSelection(
         name=name,
         description=description,
@@ -428,6 +460,7 @@ def collect_printer(
         device_uri=connection.uri,
         driver=driver,
         ppd=ppd,
+        raw_port=raw_port,
     )
 
 
@@ -441,9 +474,14 @@ def run_wizard(
     add_printer: Callable[[WizardSelection], None],
     *,
     preferred_ppds: Mapping[str, Path] | None = None,
+    used_raw_ports: set[int] | None = None,
+    raw_port_owners: Mapping[int, str] | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> None:
+    occupied_raw_port_owners = dict(raw_port_owners or {})
+    for number in used_raw_ports or ():
+        occupied_raw_port_owners.setdefault(number, "")
     output("")
     output("airprint-server setup wizard")
     output("============================")
@@ -454,6 +492,7 @@ def run_wizard(
             runner,
             profiles,
             preferred_ppds=preferred_ppds,
+            raw_port_owners=occupied_raw_port_owners,
             input_fn=input_fn,
             output=output,
         )
@@ -461,6 +500,13 @@ def run_wizard(
             output("Setup wizard finished.")
             return
         add_printer(selection)
+        occupied_raw_port_owners = {
+            number: owner
+            for number, owner in occupied_raw_port_owners.items()
+            if owner != selection.name
+        }
+        if selection.raw_port is not None:
+            occupied_raw_port_owners[selection.raw_port] = selection.name
         if not _yes_no("Add another printer?", default=False, input_fn=input_fn):
             output("Setup wizard finished.")
             return

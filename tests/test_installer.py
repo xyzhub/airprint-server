@@ -42,6 +42,10 @@ def test_install_reports_real_phases(monkeypatch: object, tmp_path: Path) -> Non
         lambda: (True, "Test Raspberry Pi OS"),
     )  # type: ignore[attr-defined]
     monkeypatch.setattr("airprint_server.installer.initialize_config", lambda: None)  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "airprint_server.installer.raw_proxy.install_service",
+        lambda _runner, current: setattr(current, "raw_proxy_service_managed", True),
+    )  # type: ignore[attr-defined]
     monkeypatch.setattr("airprint_server.installer.save_state", lambda _state: None)  # type: ignore[attr-defined]
     monkeypatch.setattr(
         "airprint_server.installer.rastertoescpos_available", lambda _runner: True

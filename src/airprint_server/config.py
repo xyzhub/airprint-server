@@ -11,7 +11,13 @@ from typing import Any
 
 import yaml
 
-from airprint_server.validation import ValidationError, device_uri, profile_id, queue_name
+from airprint_server.validation import (
+    ValidationError,
+    device_uri,
+    port,
+    profile_id,
+    queue_name,
+)
 
 CONFIG_DIR = Path("/etc/airprint-server")
 CONFIG_PATH = CONFIG_DIR / "config.yaml"
@@ -31,6 +37,7 @@ class ManagedPrinter:
     ppd: str | None = None
     cups_options: dict[str, str] = field(default_factory=dict)
     adopted: bool = False
+    raw_port: int | None = None
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> ManagedPrinter:
@@ -52,6 +59,7 @@ class ManagedPrinter:
             ppd=str(raw["ppd"]) if raw.get("ppd") else None,
             cups_options={str(k): str(v) for k, v in options.items()},
             adopted=bool(raw.get("adopted", False)),
+            raw_port=port(raw["raw_port"]) if raw.get("raw_port") is not None else None,
         )
 
 
@@ -69,6 +77,7 @@ class State:
     update_remote: str | None = None
     installed_revision: str | None = None
     vendor_drivers: dict[str, dict[str, str]] = field(default_factory=dict)
+    raw_proxy_service_managed: bool = False
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> State:
@@ -78,6 +87,17 @@ class State:
         printers = {
             name: ManagedPrinter.from_mapping(value) for name, value in printers_raw.items()
         }
+        raw_ports: dict[int, str] = {}
+        for printer in printers.values():
+            if printer.raw_port is None:
+                continue
+            previous = raw_ports.get(printer.raw_port)
+            if previous:
+                raise ValidationError(
+                    f"raw TCP port {printer.raw_port} is assigned to both "
+                    f"{previous!r} and {printer.name!r}"
+                )
+            raw_ports[printer.raw_port] = printer.name
         vendor_drivers_raw = raw.get("vendor_drivers", {})
         if not isinstance(vendor_drivers_raw, dict) or any(
             not isinstance(value, dict) for value in vendor_drivers_raw.values()
@@ -102,6 +122,7 @@ class State:
                 str(raw["installed_revision"]) if raw.get("installed_revision") else None
             ),
             vendor_drivers=vendor_drivers,
+            raw_proxy_service_managed=bool(raw.get("raw_proxy_service_managed", False)),
         )
 
 

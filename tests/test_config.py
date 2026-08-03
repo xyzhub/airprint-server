@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 from airprint_server.config import ManagedPrinter, State, load_state, save_state
+from airprint_server.validation import ValidationError
 
 
 def test_state_round_trip_and_atomic_replacement(tmp_path: Path) -> None:
@@ -31,3 +33,25 @@ def test_state_round_trip_and_atomic_replacement(tmp_path: Path) -> None:
 
 def test_missing_state_is_empty(tmp_path: Path) -> None:
     assert load_state(tmp_path / "missing.yaml").printers == {}
+
+
+def test_raw_tcp_port_round_trips_and_duplicate_ports_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "state.yaml"
+    first = ManagedPrinter(
+        "First", "First", None, "usb://Vendor/First", "usb", raw_port=9100
+    )
+    save_state(State(printers={"First": first}), path)
+    assert load_state(path).printers["First"].raw_port == 9100
+
+    duplicate = yaml.safe_load(path.read_text())
+    duplicate["printers"]["Second"] = {
+        "name": "Second",
+        "description": "Second",
+        "profile": None,
+        "device_uri": "usb://Vendor/Second",
+        "connection": "usb",
+        "raw_port": 9100,
+    }
+    path.write_text(yaml.safe_dump(duplicate), encoding="utf-8")
+    with pytest.raises(ValidationError, match="raw TCP port 9100"):
+        load_state(path)

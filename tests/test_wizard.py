@@ -50,7 +50,7 @@ def test_collect_xprinter_usb_uses_suggested_profile() -> None:
             )
         }
     )
-    input_fn, _ = answers("1", "1", "", "")
+    input_fn, _ = answers("1", "1", "", "", "")
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
         load_profiles(),
@@ -79,7 +79,7 @@ def test_collect_xprinter_58_usb_uses_matching_profile() -> None:
             )
         }
     )
-    input_fn, _ = answers("1", "1", "", "")
+    input_fn, _ = answers("1", "1", "", "", "")
 
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
@@ -104,7 +104,7 @@ def test_collect_bixolon_usb_uses_job_cut_profile() -> None:
             )
         }
     )
-    input_fn, _ = answers("1", "1", "", "")
+    input_fn, _ = answers("1", "1", "", "", "")
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
         load_profiles(),
@@ -130,7 +130,7 @@ def test_collect_bixolon_prefers_installed_vendor_ppd(tmp_path: Path) -> None:
     )
     ppd = tmp_path / "SRPE300.ppd"
     ppd.write_text("*PPD-Adobe: \"4.3\"\n", encoding="utf-8")
-    input_fn, _ = answers("1", "1", "", "")
+    input_fn, _ = answers("1", "1", "", "", "")
 
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
@@ -159,7 +159,7 @@ def test_collect_generic_usb_suggests_installed_driver() -> None:
             ),
         }
     )
-    input_fn, _ = answers("1", "1", "1", "", "")
+    input_fn, _ = answers("1", "1", "1", "", "", "")
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
         load_profiles(),
@@ -201,3 +201,54 @@ def test_install_wizard_mode_defaults() -> None:
     assert parser.parse_args(
         ["install-xprinter-driver", "/tmp/xprinter.deb"]
     ).package == Path("/tmp/xprinter.deb")
+
+
+def test_wizard_offers_next_available_raw_tcp_port() -> None:
+    devices = ("lpinfo", "-v")
+    runner = FakeRunner(
+        {
+            devices: CommandResult(
+                devices,
+                0,
+                "direct usb://Acme/Receipt?serial=1\n",
+            )
+        }
+    )
+    input_fn, _ = answers("1", "1", "", "", "y", "")
+
+    selection = collect_printer(
+        runner,  # type: ignore[arg-type]
+        load_profiles(),
+        used_raw_ports={9100},
+        input_fn=input_fn,  # type: ignore[arg-type]
+        output=lambda _message: None,
+    )
+
+    assert selection is not None
+    assert selection.raw_port == 9101
+
+
+def test_wizard_reuses_current_queue_raw_port_during_reconfiguration() -> None:
+    devices = ("lpinfo", "-v")
+    runner = FakeRunner(
+        {
+            devices: CommandResult(
+                devices,
+                0,
+                "direct usb://Acme/Receipt?serial=1\n",
+            )
+        }
+    )
+    input_fn, _ = answers("1", "1", "", "", "y", "")
+
+    selection = collect_printer(
+        runner,  # type: ignore[arg-type]
+        load_profiles(),
+        raw_port_owners={9100: "Acme-Receipt"},
+        input_fn=input_fn,  # type: ignore[arg-type]
+        output=lambda _message: None,
+    )
+
+    assert selection is not None
+    assert selection.name == "Acme-Receipt"
+    assert selection.raw_port == 9100

@@ -29,10 +29,22 @@ If a socket printer is unreachable, test `nc -vz HOST 9100`. A failed ping
 alone is not evidence of a print failure. If jobs complete but paper stays
 blank, confirm the selected PPD/filter and inspect CUPS' recent error log.
 
+For an exposed raw TCP queue, verify both the managed mapping and local
+listener before testing from another computer:
+
+```sh
+sudo airprint-server status
+systemctl status airprint-server-raw --no-pager
+nc -vz 127.0.0.1 9100
+journalctl -u airprint-server-raw -u cups --no-pager -n 50
+```
+
+Raw clients must send printer-ready bytes produced by the correct client-side
+driver. Plain PDF, JPEG, or text data is not converted by the raw listener.
+
 For USB absence or instability, follow [USB printers](usb-printers.md).
 
 An image printed from an iPhone validates discovery, AirPrint submission,
 CUPS conversion, the selected driver, transport, and printer. A web page that
 lays out poorly only in Safari print may instead need application print CSS;
 that is outside this server configuration.
-

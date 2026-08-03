@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from airprint_server import avahi, cups
+from airprint_server import avahi, cups, raw_proxy
 from airprint_server.commands import Runner, command_exists
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.discovery import discover_usb, tcp_reachable
@@ -125,6 +125,25 @@ def diagnose(
             )
         )
     checks.append(Check(True, "Device URI valid", printer.device_uri))
+    if printer.raw_port is not None:
+        service_running = avahi.service_active(runner, raw_proxy.RAW_PROXY_SERVICE_NAME)
+        checks.append(
+            Check(
+                service_running,
+                "Raw TCP gateway running",
+                f"port {printer.raw_port}",
+                f"sudo systemctl status {raw_proxy.RAW_PROXY_SERVICE_NAME}",
+            )
+        )
+        reachable, detail = tcp_reachable("127.0.0.1", printer.raw_port)
+        checks.append(
+            Check(
+                reachable,
+                "Raw TCP listener reachable",
+                detail,
+                f"nc -vz 127.0.0.1 {printer.raw_port}",
+            )
+        )
     if avahi_installed and exists:
         checks.append(
             Check(
@@ -193,7 +212,7 @@ def diagnose(
 
 
 def recent_logs(runner: Runner, *, include_ipp_usb: bool = False) -> str:
-    services = ["cups.service", "avahi-daemon.service"]
+    services = ["cups.service", "avahi-daemon.service", raw_proxy.RAW_PROXY_SERVICE_NAME]
     if include_ipp_usb:
         services.append("ipp-usb.service")
     service_args = [value for service in services for value in ("-u", service)]

@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from airprint_server import DESCRIPTION, __version__, cups, installer
+from airprint_server import DESCRIPTION, __version__, cups, installer, raw_proxy
 from airprint_server.bixolon_driver import (
     BIXOLON_CUPS_OPTIONS,
     BixolonInstallation,
@@ -159,6 +159,27 @@ def cmd_add(
         raise ValidationError(
             f"CUPS queue {name!r} already exists and is unmanaged; use adopt-printer first"
         )
+    requested_raw_port = getattr(args, "raw_port", None)
+    existing = state.printers.get(name)
+    selected_raw_port = (
+        requested_raw_port
+        if requested_raw_port is not None
+        else existing.raw_port if existing else None
+    )
+    if selected_raw_port is not None:
+        selected_raw_port = port(selected_raw_port)
+        conflict = next(
+            (
+                printer.name
+                for printer in state.printers.values()
+                if printer.name != name and printer.raw_port == selected_raw_port
+            ),
+            None,
+        )
+        if conflict:
+            raise ValidationError(
+                f"raw TCP port {selected_raw_port} is already assigned to {conflict}"
+            )
     official_bixolon_ppd = installed_bixolon_ppd(state)
     can_use_automatic_bixolon = bool(
         selected
@@ -239,6 +260,7 @@ def cmd_add(
         ppd=ppd,
         cups_options=options,
         adopted=bool(args.adopt),
+        raw_port=selected_raw_port,
     )
     print(f"Queue: {name}\nURI: {uri}\nDriver: {ppd or driver or 'driverless'}")
     if not _confirm("Create or update this queue?", args.yes):
@@ -248,6 +270,8 @@ def cmd_add(
     state.printers[name] = managed
     if not runner.dry_run:
         save_state(state)
+        if state.raw_proxy_service_managed:
+            raw_proxy.reconcile_service(runner, state)
     print(f"Managed and shared CUPS queue {name}.")
 
 
@@ -296,6 +320,7 @@ def cmd_setup(
             disable_ipp_usb=False,
             adopt=False,
             yes=args.yes,
+            raw_port=selection.raw_port,
         )
         cmd_add(add_args, runner, state, profiles)
 
@@ -307,7 +332,58 @@ def cmd_setup(
         xprinter_ppd = installed_xprinter_ppd(state, model)
         if xprinter_ppd:
             preferred_ppds[profile_id] = xprinter_ppd
-    run_wizard(runner, profiles, add_selection, preferred_ppds=preferred_ppds)
+    run_wizard(
+        runner,
+        profiles,
+        add_selection,
+        preferred_ppds=preferred_ppds,
+        raw_port_owners={
+            printer.raw_port: printer.name
+            for printer in state.printers.values()
+            if printer.raw_port is not None
+        },
+    )
+
+
+def cmd_expose_raw(args: argparse.Namespace, runner: Runner, state: State) -> None:
+    _root()
+    name = queue_name(args.printer)
+    printer = state.printers.get(name)
+    if not printer:
+        raise ValidationError(f"{name!r} is not a managed queue")
+    number = (
+        port(args.port)
+        if args.port is not None
+        else printer.raw_port or raw_proxy.next_available_port(state)
+    )
+    conflict = next(
+        (
+            item.name
+            for item in state.printers.values()
+            if item.name != name and item.raw_port == number
+        ),
+        None,
+    )
+    if conflict:
+        raise ValidationError(f"raw TCP port {number} is already assigned to {conflict}")
+    printer.raw_port = number
+    if not runner.dry_run:
+        save_state(state)
+        raw_proxy.reconcile_service(runner, state)
+    print(f"{name} is available at raw TCP port {number}.")
+
+
+def cmd_unexpose_raw(args: argparse.Namespace, runner: Runner, state: State) -> None:
+    _root()
+    name = queue_name(args.printer)
+    printer = state.printers.get(name)
+    if not printer:
+        raise ValidationError(f"{name!r} is not a managed queue")
+    printer.raw_port = None
+    if not runner.dry_run:
+        save_state(state)
+        raw_proxy.reconcile_service(runner, state)
+    print(f"Raw TCP access disabled for {name}.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -351,6 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("--host", type=host)
     add.add_argument("--port", type=port, default=9100)
+    add.add_argument("--raw-port", type=port)
     add.add_argument("--disable-snmp", action="store_true")
     add.add_argument("--device-uri")
     driver = add.add_mutually_exclusive_group()
@@ -360,6 +437,15 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--adopt", action="store_true", help=argparse.SUPPRESS)
     remove = sub.add_parser("remove-printer", parents=[common])
     remove.add_argument("name")
+    expose = sub.add_parser(
+        "expose-raw", parents=[common], help="expose a managed queue over raw TCP/JetDirect"
+    )
+    expose.add_argument("printer")
+    expose.add_argument("--port", type=port)
+    unexpose = sub.add_parser(
+        "unexpose-raw", parents=[common], help="disable raw TCP access for a managed queue"
+    )
+    unexpose.add_argument("printer")
     sub.add_parser("list-printers", parents=[common])
     sub.add_parser("discover", parents=[common])
     sub.add_parser("discover-usb", parents=[common])
@@ -402,10 +488,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", parents=[common])
     adopt = sub.add_parser("adopt-printer", parents=[common])
     adopt.add_argument("name")
+    serve_raw = sub.add_parser(
+        "serve-raw", help="run the managed raw TCP gateway service"
+    )
+    serve_raw.add_argument("--config", type=Path, default=raw_proxy.RAW_PROXY_CONFIG_PATH)
     return parser
 
 
 def _dispatch(args: argparse.Namespace) -> None:
+    if args.command == "serve-raw":
+        raw_proxy.serve_config(args.config)
+        return
     runner = Runner(dry_run=args.dry_run)
     state = load_state()
     profiles = load_profiles(PROFILE_DIR)
@@ -452,6 +545,10 @@ def _dispatch(args: argparse.Namespace) -> None:
             if not runner.dry_run:
                 save_state(state)
         cmd_add(args, runner, state, profiles)
+    elif args.command == "expose-raw":
+        cmd_expose_raw(args, runner, state)
+    elif args.command == "unexpose-raw":
+        cmd_unexpose_raw(args, runner, state)
     elif args.command == "setup":
         cmd_setup(args, runner, state, profiles)
     elif args.command == "update":
@@ -552,6 +649,8 @@ def _dispatch(args: argparse.Namespace) -> None:
             if not runner.dry_run:
                 del state.printers[name]
                 save_state(state)
+                if state.raw_proxy_service_managed:
+                    raw_proxy.reconcile_service(runner, state)
             print(f"Removed {name}; no other queue was changed.")
     elif args.command == "list-printers":
         actual = cups.list_queues(runner)
@@ -563,6 +662,9 @@ def _dispatch(args: argparse.Namespace) -> None:
                 flags.extend(["enabled" if actual[name].enabled else "disabled"])
             else:
                 flags.append("missing")
+            managed = state.printers.get(name)
+            if managed and managed.raw_port is not None:
+                flags.append(f"raw-tcp={managed.raw_port}")
             print(f"{name}: {', '.join(flags)}")
     elif args.command == "discover-usb":
         devices = discover_usb(runner)

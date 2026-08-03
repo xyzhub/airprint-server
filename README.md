@@ -7,7 +7,9 @@ profiles for ESC/POS thermal receipt printers.
 Bonjour/DNS-SD advertiser. Printer profiles supply model-specific driver and
 media defaults; connection settings independently select USB, raw socket, IPP,
 IPPS, LPD, or another CUPS URI. This separation also supports installed vendor
-drivers and custom PPD files.
+drivers and custom PPD files. Managed queues can optionally be exposed back to
+the trusted LAN as raw TCP/JetDirect printers, allowing a USB printer to appear
+at the Raspberry Pi's address on port 9100.
 
 ## Support and limitations
 
@@ -115,9 +117,24 @@ printer setup after installing the system components. The wizard:
 4. Downloads and verifies the official BIXOLON or XPrinter driver after license
    confirmation when a selected profile needs it; otherwise uses the profile
    driver, suggests matching installed CUPS models, or asks for a vendor PPD.
-5. Validates the queue name and AirPrint display name before showing the normal
-   queue confirmation.
-6. Offers to configure additional printers.
+5. Validates the queue name and AirPrint display name, then optionally exposes
+   the queue as a raw TCP/JetDirect printer. Port 9100 is suggested first and
+   subsequent printers use 9101, 9102, and so on.
+6. Shows the normal queue confirmation and offers to configure additional
+   printers.
+
+Raw TCP exposure is disabled by default because it has no authentication or
+encryption. Run `sudo airprint-server setup` and accept the raw TCP prompt, or
+enable an existing managed queue explicitly:
+
+```sh
+sudo airprint-server expose-raw BIXOLON-SRP-E300
+```
+
+Clients then add a Standard TCP/IP, AppSocket, or JetDirect printer using the
+Pi's LAN address and the displayed port. See
+[Network printers](docs/network-printers.md) for data-format and security
+requirements.
 
 Run the wizard again at any time:
 
