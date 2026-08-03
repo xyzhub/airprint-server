@@ -188,7 +188,14 @@ def install_service(
     config_path: Path = RAW_PROXY_CONFIG_PATH,
 ) -> None:
     if (service_path.exists() or service_path.is_symlink()) and not state.raw_proxy_service_managed:
-        raise RuntimeError(f"refusing to replace unmanaged system service: {service_path}")
+        if service_path.is_symlink() or not service_path.is_file():
+            raise RuntimeError(f"refusing to replace unmanaged system service: {service_path}")
+        try:
+            existing_service = service_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(f"cannot inspect existing system service: {service_path}") from exc
+        if existing_service != RAW_PROXY_SERVICE:
+            raise RuntimeError(f"refusing to replace unmanaged system service: {service_path}")
     _write_text(service_path, RAW_PROXY_SERVICE)
     state.raw_proxy_service_managed = True
     runner.run(["systemctl", "daemon-reload"])

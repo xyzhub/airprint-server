@@ -468,6 +468,69 @@ def _invalid_description() -> str:
     raise ValidationError("description may not be empty")
 
 
+def configure_existing_raw_exposure(
+    managed_raw_ports: Mapping[str, int | None],
+    set_raw_exposure: Callable[[str, int | None], None],
+    *,
+    input_fn: Input = input,
+    output: Output = print,
+) -> None:
+    if not managed_raw_ports or not _yes_no(
+        "Configure standard Ethernet-printer access for an existing queue?",
+        default=False,
+        input_fn=input_fn,
+    ):
+        return
+    names = sorted(managed_raw_ports)
+    labels = [
+        f"{name} — raw TCP port {managed_raw_ports[name]}"
+        if managed_raw_ports[name] is not None
+        else f"{name} — AirPrint only"
+        for name in names
+    ]
+    name = names[
+        _choice(
+            "Choose an existing managed printer:",
+            labels,
+            input_fn=input_fn,
+            output=output,
+        )
+    ]
+    current = managed_raw_ports[name]
+    if not _yes_no(
+        f"Make {name} available as a standard raw TCP/JetDirect printer?",
+        default=True,
+        input_fn=input_fn,
+    ):
+        set_raw_exposure(name, None)
+        return
+    occupied = {
+        number
+        for queue, number in managed_raw_ports.items()
+        if queue != name and number is not None
+    }
+    suggested = current or next(
+        candidate for candidate in range(9100, 65536) if candidate not in occupied
+    )
+
+    def available_raw_port(value: str) -> int:
+        selected = port(value)
+        if selected in occupied:
+            raise ValidationError(f"raw TCP port {selected} is already assigned")
+        return selected
+
+    selected_port = int(
+        _validated(
+            "Raw TCP listen port",
+            available_raw_port,
+            default=str(suggested),
+            input_fn=input_fn,
+            output=output,
+        )
+    )
+    set_raw_exposure(name, selected_port)
+
+
 def run_wizard(
     runner: Runner,
     profiles: dict[str, PrinterProfile],
@@ -476,6 +539,8 @@ def run_wizard(
     preferred_ppds: Mapping[str, Path] | None = None,
     used_raw_ports: set[int] | None = None,
     raw_port_owners: Mapping[int, str] | None = None,
+    managed_raw_ports: Mapping[str, int | None] | None = None,
+    set_raw_exposure: Callable[[str, int | None], None] | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> None:
@@ -487,6 +552,21 @@ def run_wizard(
     output("============================")
     output("The wizard will discover printers and create only the queues you confirm.")
     output("Supported vendor drivers will be offered for download when they are needed.")
+    if managed_raw_ports and set_raw_exposure:
+        def record_raw_exposure(name: str, number: int | None) -> None:
+            set_raw_exposure(name, number)
+            for assigned, owner in list(occupied_raw_port_owners.items()):
+                if owner == name:
+                    del occupied_raw_port_owners[assigned]
+            if number is not None:
+                occupied_raw_port_owners[number] = name
+
+        configure_existing_raw_exposure(
+            managed_raw_ports,
+            record_raw_exposure,
+            input_fn=input_fn,
+            output=output,
+        )
     while True:
         selection = collect_printer(
             runner,

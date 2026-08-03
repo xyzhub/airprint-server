@@ -12,8 +12,16 @@ Install an available revision:
 sudo airprint-server update
 ```
 
-The command displays abbreviated installed and target Git revisions and asks
-for confirmation. It then performs a fast-forward update and invokes the
+The command displays the installed and target release versions, with abbreviated
+Git revisions for precise identification, and asks for confirmation. For
+example:
+
+```text
+Update airprint-server from v0.1.0 (3ba4142e543b) to v0.2.0 (a1b2c3d4e5f6)? [y/N]
+```
+
+If a target commit does not have a release tag, the updater falls back to its
+abbreviated Git revision. It then performs a fast-forward update and invokes the
 idempotent installer with `--no-wizard`, so existing queues remain managed and
 the interactive setup does not run.
 
@@ -75,4 +83,3 @@ sudo airprint-server update --dry-run
 If an installation attempt fails, managed queues and state remain in place.
 Resolve the reported error and rerun the update. The updater never performs a
 hard reset or overwrites local changes.
-

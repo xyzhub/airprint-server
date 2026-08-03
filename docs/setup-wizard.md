@@ -47,6 +47,13 @@ first exposed printer defaults to port 9100; because one Pi address cannot map
 two queues to the same TCP port, later printers default to 9101, 9102, and so
 on. Raw exposure remains opt-in because the protocol is unauthenticated.
 
+If printers are already managed, the wizard first offers to configure standard
+Ethernet-printer access for one of them. Select the queue, accept raw
+TCP/JetDirect exposure, and accept or change the suggested port. This updates
+only the network exposure; it does not recreate the CUPS queue. If an older or
+interrupted installation is missing the gateway service, the wizard repairs the
+managed service automatically.
+
 The result passes through the same managed-queue confirmation used by
 `add-printer`. It never creates or changes a queue that the operator does not
 confirm.

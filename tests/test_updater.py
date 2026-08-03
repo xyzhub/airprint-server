@@ -9,6 +9,7 @@ from airprint_server.config import State, load_state, save_state
 from airprint_server.updater import (
     UPDATE_BRANCH,
     UPDATE_REMOTE,
+    remote_release_version,
     remote_revision,
     update_project,
     validate_managed_source,
@@ -24,6 +25,53 @@ def test_remote_revision_parsing() -> None:
         {command: CommandResult(command, 0, f"{NEW_REVISION}\trefs/heads/main\n")}
     )
     assert remote_revision(runner) == NEW_REVISION  # type: ignore[arg-type]
+
+
+def test_remote_release_version_finds_tag_for_target_revision() -> None:
+    command = ("git", "ls-remote", "--tags", UPDATE_REMOTE, "refs/tags/v*")
+    runner = FakeRunner(
+        {
+            command: CommandResult(
+                command,
+                0,
+                f"{'3' * 40}\trefs/tags/v0.1.0\n"
+                f"{NEW_REVISION}\trefs/tags/v0.2.0\n",
+            )
+        }
+    )
+
+    assert remote_release_version(runner, NEW_REVISION) == "0.2.0"  # type: ignore[arg-type]
+
+
+def test_update_confirmation_shows_versions_and_short_revisions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_path = tmp_path / "state.yaml"
+    save_state(State(installed_revision=OLD_REVISION), state_path)
+    monkeypatch.setattr(
+        "airprint_server.updater.remote_revision",
+        lambda *_args, **_kwargs: NEW_REVISION,
+    )
+    monkeypatch.setattr(
+        "airprint_server.updater.remote_release_version",
+        lambda *_args, **_kwargs: "0.2.0",
+    )
+    prompts: list[str] = []
+
+    result = update_project(
+        FakeRunner(),  # type: ignore[arg-type]
+        confirm=lambda message: prompts.append(message) or False,
+        state_path=state_path,
+        source=tmp_path / "source",
+        read_runner=FakeRunner(),  # type: ignore[arg-type]
+        current_version="0.1.0",
+    )
+
+    assert result.cancelled
+    assert prompts == [
+        "Update airprint-server from v0.1.0 (111111111111) "
+        "to v0.2.0 (222222222222)?"
+    ]
 
 
 def test_update_check_does_not_change_state(tmp_path: Path) -> None:

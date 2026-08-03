@@ -120,12 +120,16 @@ printer setup after installing the system components. The wizard:
 5. Validates the queue name and AirPrint display name, then optionally exposes
    the queue as a raw TCP/JetDirect printer. Port 9100 is suggested first and
    subsequent printers use 9101, 9102, and so on.
-6. Shows the normal queue confirmation and offers to configure additional
+6. When managed queues already exist, offers a separate screen to enable,
+   change, or disable their standard Ethernet-printer access without recreating
+   the CUPS queue or typing an `expose-raw` command.
+7. Shows the normal queue confirmation and offers to configure additional
    printers.
 
 Raw TCP exposure is disabled by default because it has no authentication or
-encryption. Run `sudo airprint-server setup` and accept the raw TCP prompt, or
-enable an existing managed queue explicitly:
+encryption. The installation wizard offers it for each new queue. When the
+wizard is run later, choose the existing-printer option to enable it for an
+already managed queue. The equivalent advanced command is:
 
 ```sh
 sudo airprint-server expose-raw BIXOLON-SRP-E300

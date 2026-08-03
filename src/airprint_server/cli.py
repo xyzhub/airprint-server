@@ -31,7 +31,7 @@ from airprint_server.discovery import discover_network, discover_usb, select_usb
 from airprint_server.profiles import PrinterProfile, load_profiles
 from airprint_server.progress import ProgressBar
 from airprint_server.testprint import submit_cutter_test, submit_test
-from airprint_server.updater import update_project
+from airprint_server.updater import revision_label, update_project
 from airprint_server.validation import (
     ValidationError,
     device_uri,
@@ -56,6 +56,36 @@ XPRINTER_PROFILE_MODELS = {
     "xprinter-76mm": "76",
     "xprinter-80mm": "80",
 }
+
+
+def _sync_raw_service(runner: Runner, state: State) -> None:
+    if state.raw_proxy_service_managed:
+        raw_proxy.reconcile_service(runner, state)
+    else:
+        raw_proxy.install_service(runner, state)
+
+
+def _set_raw_port(runner: Runner, state: State, name: str, number: int | None) -> None:
+    printer = state.printers.get(name)
+    if not printer:
+        raise ValidationError(f"{name!r} is not a managed queue")
+    if number is not None:
+        conflict = next(
+            (
+                item.name
+                for item in state.printers.values()
+                if item.name != name and item.raw_port == number
+            ),
+            None,
+        )
+        if conflict:
+            raise ValidationError(f"raw TCP port {number} is already assigned to {conflict}")
+    printer.raw_port = number
+    if runner.dry_run:
+        return
+    if number is not None or state.raw_proxy_service_managed:
+        _sync_raw_service(runner, state)
+    save_state(state)
 
 
 def _root() -> None:
@@ -269,9 +299,9 @@ def cmd_add(
     cups.create_or_update_queue(runner, managed)
     state.printers[name] = managed
     if not runner.dry_run:
+        if managed.raw_port is not None or state.raw_proxy_service_managed:
+            _sync_raw_service(runner, state)
         save_state(state)
-        if state.raw_proxy_service_managed:
-            raw_proxy.reconcile_service(runner, state)
     print(f"Managed and shared CUPS queue {name}.")
 
 
@@ -324,6 +354,13 @@ def cmd_setup(
         )
         cmd_add(add_args, runner, state, profiles)
 
+    def set_raw_exposure(name: str, number: int | None) -> None:
+        _set_raw_port(runner, state, name, number)
+        if number is None:
+            print(f"Raw TCP access disabled for {name}.")
+        else:
+            print(f"{name} is available at raw TCP port {number}.")
+
     preferred_ppds: dict[str, Path] = {}
     official_ppd = installed_bixolon_ppd(state)
     if official_ppd:
@@ -342,6 +379,8 @@ def cmd_setup(
             for printer in state.printers.values()
             if printer.raw_port is not None
         },
+        managed_raw_ports={name: printer.raw_port for name, printer in state.printers.items()},
+        set_raw_exposure=set_raw_exposure,
     )
 
 
@@ -356,20 +395,7 @@ def cmd_expose_raw(args: argparse.Namespace, runner: Runner, state: State) -> No
         if args.port is not None
         else printer.raw_port or raw_proxy.next_available_port(state)
     )
-    conflict = next(
-        (
-            item.name
-            for item in state.printers.values()
-            if item.name != name and item.raw_port == number
-        ),
-        None,
-    )
-    if conflict:
-        raise ValidationError(f"raw TCP port {number} is already assigned to {conflict}")
-    printer.raw_port = number
-    if not runner.dry_run:
-        save_state(state)
-        raw_proxy.reconcile_service(runner, state)
+    _set_raw_port(runner, state, name, number)
     print(f"{name} is available at raw TCP port {number}.")
 
 
@@ -379,10 +405,7 @@ def cmd_unexpose_raw(args: argparse.Namespace, runner: Runner, state: State) -> 
     printer = state.printers.get(name)
     if not printer:
         raise ValidationError(f"{name!r} is not a managed queue")
-    printer.raw_port = None
-    if not runner.dry_run:
-        save_state(state)
-        raw_proxy.reconcile_service(runner, state)
+    _set_raw_port(runner, state, name, None)
     print(f"Raw TCP access disabled for {name}.")
 
 
@@ -560,17 +583,32 @@ def _dispatch(args: argparse.Namespace) -> None:
         )
         if args.check:
             if result.update_available:
-                print(f"Update available: {result.available_revision[:12]}")
+                print(
+                    "Update available: "
+                    f"{revision_label(result.available_revision, result.available_version)}"
+                )
             else:
-                print(f"airprint-server is up to date: {result.available_revision[:12]}")
+                print(
+                    "airprint-server is up to date: "
+                    f"{revision_label(result.available_revision, result.available_version)}"
+                )
         elif result.cancelled:
             print("Update cancelled.")
         elif result.dry_run:
-            print(f"Would update to {result.available_revision[:12]}.")
+            print(
+                "Would update to "
+                f"{revision_label(result.available_revision, result.available_version)}."
+            )
         elif result.changed:
-            print(f"Updated airprint-server to {result.available_revision[:12]}.")
+            print(
+                "Updated airprint-server to "
+                f"{revision_label(result.available_revision, result.available_version)}."
+            )
         else:
-            print(f"airprint-server is already up to date: {result.available_revision[:12]}")
+            print(
+                "airprint-server is already up to date: "
+                f"{revision_label(result.available_revision, result.available_version)}"
+            )
     elif args.command == "install-bixolon-driver":
         _root()
         if not _confirm(

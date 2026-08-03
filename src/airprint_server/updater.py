@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from airprint_server import __version__
 from airprint_server.commands import Runner
 from airprint_server.config import STATE_DIR, STATE_PATH, load_state, save_state
 
@@ -16,6 +17,7 @@ UPDATE_REMOTE = "https://github.com/xyzhub/airprint-server.git"
 UPDATE_BRANCH = "main"
 UPDATE_SOURCE = STATE_DIR / "source"
 REVISION_RE = re.compile(r"^[0-9a-f]{40,64}$")
+RELEASE_TAG_RE = re.compile(r"^refs/tags/v(?P<version>\d+\.\d+\.\d+)(?:\^\{\})?$")
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,8 @@ class UpdateResult:
     changed: bool = False
     cancelled: bool = False
     dry_run: bool = False
+    installed_version: str | None = None
+    available_version: str | None = None
 
 
 def remote_revision(
@@ -47,6 +51,37 @@ def remote_revision(
     if not REVISION_RE.fullmatch(revision):
         raise RuntimeError(f"remote branch {branch!r} did not return a valid Git revision")
     return revision
+
+
+def remote_release_version(
+    runner: Runner,
+    revision: str,
+    *,
+    remote: str = UPDATE_REMOTE,
+) -> str | None:
+    """Return the release tag attached to a revision, when one is published."""
+    result = runner.run(
+        ["git", "ls-remote", "--tags", remote, "refs/tags/v*"],
+        check=False,
+        timeout=30,
+    )
+    if result.returncode:
+        return None
+    matches: list[tuple[tuple[int, int, int], str]] = []
+    for line in result.stdout.splitlines():
+        raw_revision, separator, reference = line.partition("\t")
+        match = RELEASE_TAG_RE.fullmatch(reference.strip())
+        if not separator or raw_revision.strip().lower() != revision or not match:
+            continue
+        version = match.group("version")
+        major, minor, patch = version.split(".")
+        matches.append(((int(major), int(minor), int(patch)), version))
+    return max(matches)[1] if matches else None
+
+
+def revision_label(revision: str | None, version: str | None) -> str:
+    short_revision = revision[:12] if revision else "not installed"
+    return f"v{version} ({short_revision})" if version else f"commit {short_revision}"
 
 
 def _read_git(runner: Runner, source: Path, *args: str) -> str:
@@ -115,17 +150,25 @@ def update_project(
     branch: str = UPDATE_BRANCH,
     read_runner: Runner | None = None,
     enforce_root_owner: bool = True,
+    current_version: str = __version__,
 ) -> UpdateResult:
     """Check or install a fast-forward update from the fixed upstream repository."""
     reader = read_runner or Runner()
     state = load_state(state_path)
     target = remote_revision(reader, remote=remote, branch=branch)
+    target_version = remote_release_version(reader, target, remote=remote)
     installed = state.installed_revision
     if source.is_symlink():
         raise RuntimeError(f"managed update source may not be a symbolic link: {source}")
     available = installed != target or not source.exists()
     if check_only:
-        return UpdateResult(installed, target, available)
+        return UpdateResult(
+            installed,
+            target,
+            available,
+            installed_version=current_version,
+            available_version=target_version,
+        )
 
     current_source: str | None = None
     if source.exists():
@@ -138,13 +181,35 @@ def update_project(
         )
         available = available or current_source != target
     if not available:
-        return UpdateResult(installed, target, False)
+        return UpdateResult(
+            installed,
+            target,
+            False,
+            installed_version=current_version,
+            available_version=target_version,
+        )
 
-    short_current = (installed or current_source or "not installed")[:12]
-    if not confirm(f"Update airprint-server from {short_current} to {target[:12]}?"):
-        return UpdateResult(installed, target, True, cancelled=True)
+    current_revision = installed or current_source
+    current_label = revision_label(current_revision, current_version)
+    target_label = revision_label(target, target_version)
+    if not confirm(f"Update airprint-server from {current_label} to {target_label}?"):
+        return UpdateResult(
+            installed,
+            target,
+            True,
+            cancelled=True,
+            installed_version=current_version,
+            available_version=target_version,
+        )
     if runner.dry_run:
-        return UpdateResult(installed, target, True, dry_run=True)
+        return UpdateResult(
+            installed,
+            target,
+            True,
+            dry_run=True,
+            installed_version=current_version,
+            available_version=target_version,
+        )
 
     source.parent.mkdir(parents=True, exist_ok=True)
     if not source.exists():
@@ -190,4 +255,11 @@ def update_project(
     refreshed.update_remote = remote
     refreshed.installed_revision = target
     save_state(refreshed, state_path)
-    return UpdateResult(installed, target, True, changed=True)
+    return UpdateResult(
+        installed,
+        target,
+        True,
+        changed=True,
+        installed_version=current_version,
+        available_version=target_version,
+    )

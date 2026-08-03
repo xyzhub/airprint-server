@@ -8,7 +8,7 @@ import pytest
 from conftest import FakeRunner
 
 from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS, BixolonInstallation
-from airprint_server.cli import build_parser, cmd_add, main
+from airprint_server.cli import build_parser, cmd_add, cmd_expose_raw, main
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.profiles import load_profiles
 from airprint_server.xprinter_driver import XPRINTER_CUPS_OPTIONS, XPrinterInstallation
@@ -339,6 +339,31 @@ def test_add_printer_records_requested_raw_listener(monkeypatch: pytest.MonkeyPa
 
     assert configured[0].raw_port == 9100
     assert reconciled == [9100]
+
+
+def test_expose_raw_repairs_missing_managed_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt", "Receipt", None, "usb://Vendor/Receipt?serial=1", "usb"
+            )
+        }
+    )
+    installed: list[int | None] = []
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+    monkeypatch.setattr("airprint_server.cli.save_state", lambda _state: None)
+    monkeypatch.setattr(
+        "airprint_server.cli.raw_proxy.install_service",
+        lambda _runner, current: installed.append(current.printers["Receipt"].raw_port),
+    )
+    args = argparse.Namespace(printer="Receipt", port=None)
+
+    cmd_expose_raw(args, FakeRunner(), state)  # type: ignore[arg-type]
+
+    assert installed == [9100]
+    assert state.printers["Receipt"].raw_port == 9100
 
 
 def test_raw_exposure_commands_parse_valid_ports() -> None:

@@ -252,3 +252,22 @@ def test_wizard_reuses_current_queue_raw_port_during_reconfiguration() -> None:
     assert selection is not None
     assert selection.name == "Acme-Receipt"
     assert selection.raw_port == 9100
+
+
+def test_wizard_can_expose_an_existing_managed_printer() -> None:
+    devices = ("lpinfo", "-v")
+    runner = FakeRunner({devices: CommandResult(devices, 0, "")})
+    input_fn, _ = answers("y", "1", "", "", "4")
+    changed: list[tuple[str, int | None]] = []
+
+    run_wizard(
+        runner,  # type: ignore[arg-type]
+        load_profiles(),
+        lambda _selection: None,
+        managed_raw_ports={"BIXOLON-SRP-E300": None},
+        set_raw_exposure=lambda name, number: changed.append((name, number)),
+        input_fn=input_fn,  # type: ignore[arg-type]
+        output=lambda _message: None,
+    )
+
+    assert changed == [("BIXOLON-SRP-E300", 9100)]

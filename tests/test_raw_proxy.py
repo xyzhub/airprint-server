@@ -182,6 +182,50 @@ def test_managed_service_is_hardened_and_activated_for_configured_routes(
     assert ("systemctl", "restart", "airprint-server-raw.service") in runner.calls
 
 
+def test_install_adopts_an_identical_service_when_management_state_was_lost(
+    tmp_path: Path,
+) -> None:
+    service_path = tmp_path / "airprint-server-raw.service"
+    config_path = tmp_path / "raw-proxy.yaml"
+    service_path.write_text(raw_proxy.RAW_PROXY_SERVICE, encoding="utf-8")
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt",
+                "Receipt",
+                None,
+                "usb://Vendor/Receipt",
+                "usb",
+                raw_port=9100,
+            )
+        }
+    )
+    runner = FakeRunner()
+
+    install_service(
+        runner,  # type: ignore[arg-type]
+        state,
+        service_path=service_path,
+        config_path=config_path,
+    )
+
+    assert state.raw_proxy_service_managed
+    assert load_routes(config_path) == configured_routes(state)
+
+
+def test_install_refuses_to_adopt_a_different_unmanaged_service(tmp_path: Path) -> None:
+    service_path = tmp_path / "airprint-server-raw.service"
+    service_path.write_text("[Service]\nExecStart=/unknown\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="unmanaged system service"):
+        install_service(
+            FakeRunner(),  # type: ignore[arg-type]
+            State(),
+            service_path=service_path,
+            config_path=tmp_path / "raw-proxy.yaml",
+        )
+
+
 def test_reconcile_stops_listener_when_no_ports_remain(tmp_path: Path) -> None:
     service_path = tmp_path / "airprint-server-raw.service"
     config_path = tmp_path / "raw-proxy.yaml"
