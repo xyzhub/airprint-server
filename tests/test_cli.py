@@ -8,7 +8,7 @@ import pytest
 from conftest import FakeRunner
 
 from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS, BixolonInstallation
-from airprint_server.cli import build_parser, cmd_add, cmd_expose_raw, main
+from airprint_server.cli import _dispatch, build_parser, cmd_add, cmd_expose_raw, main
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.profiles import load_profiles
 from airprint_server.validation import ValidationError
@@ -380,6 +380,7 @@ def test_expose_raw_assigns_virtual_ip_and_standard_port(
         raw_address_service_managed=True,
     )
     synced: list[tuple[str | None, int | None]] = []
+    advertised: list[str | None] = []
     monkeypatch.setattr("airprint_server.cli._root", lambda: None)
     monkeypatch.setattr("airprint_server.cli.save_state", lambda _state: None)
     monkeypatch.setattr(
@@ -395,6 +396,10 @@ def test_expose_raw_assigns_virtual_ip_and_standard_port(
             )
         ),
     )
+    monkeypatch.setattr(
+        "airprint_server.cli.avahi.reconcile_raw_printer_services",
+        lambda _runner, current: advertised.append(current.printers["Receipt"].raw_address),
+    )
     args = argparse.Namespace(
         printer="Receipt", port=None, address="192.168.1.240", interface=None
     )
@@ -402,6 +407,7 @@ def test_expose_raw_assigns_virtual_ip_and_standard_port(
     cmd_expose_raw(args, FakeRunner(), state)  # type: ignore[arg-type]
 
     assert synced == [("192.168.1.240", 9100)]
+    assert advertised == ["192.168.1.240"]
     assert state.printers["Receipt"].raw_interface == "wlan0"
 
 
@@ -423,6 +429,45 @@ def test_expose_raw_rejects_interface_without_virtual_address(
             FakeRunner(),  # type: ignore[arg-type]
             state,
         )
+
+
+def test_remove_printer_saves_state_after_bonjour_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt",
+                "Receipt",
+                None,
+                "usb://Vendor/Receipt",
+                "usb",
+                raw_port=9100,
+                raw_address="192.168.1.240",
+                raw_interface="wlan0",
+            )
+        },
+        avahi_services=["/etc/avahi/services/airprint-server-receipt.service"],
+        raw_proxy_service_managed=True,
+        raw_address_service_managed=True,
+    )
+    saved_services: list[list[str]] = []
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+    monkeypatch.setattr("airprint_server.cli.Runner", FakeRunner)
+    monkeypatch.setattr("airprint_server.cli.load_state", lambda: state)
+    monkeypatch.setattr("airprint_server.cli.cups.remove_queue", lambda *_args: None)
+    monkeypatch.setattr(
+        "airprint_server.cli._sync_raw_service",
+        lambda _runner, current: current.avahi_services.clear(),
+    )
+    monkeypatch.setattr(
+        "airprint_server.cli.save_state",
+        lambda current: saved_services.append(list(current.avahi_services)),
+    )
+
+    _dispatch(build_parser().parse_args(["remove-printer", "Receipt", "--yes"]))
+
+    assert saved_services == [[]]
 
 
 def test_raw_exposure_commands_parse_valid_ports() -> None:

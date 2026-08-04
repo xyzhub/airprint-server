@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from airprint_server import DESCRIPTION, __version__, cups, installer, raw_proxy
+from airprint_server import DESCRIPTION, __version__, avahi, cups, installer, raw_proxy
 from airprint_server.bixolon_driver import (
     BIXOLON_CUPS_OPTIONS,
     BixolonInstallation,
@@ -65,6 +65,10 @@ def _sync_raw_service(runner: Runner, state: State) -> None:
         raw_proxy.reconcile_service(runner, state)
     else:
         raw_proxy.install_service(runner, state)
+    if state.avahi_services or any(
+        printer.raw_address is not None for printer in state.printers.values()
+    ):
+        avahi.reconcile_raw_printer_services(runner, state)
 
 
 def _prepare_raw_endpoint(
@@ -382,6 +386,12 @@ def cmd_add(
             _sync_raw_service(runner, state)
         save_state(state)
     print(f"Managed and shared CUPS queue {name}.")
+    if managed.raw_address is not None:
+        hostname = avahi.raw_printer_hostnames(state).get(name)
+        print(
+            f"Bonjour raw printer: {managed.description} at {hostname} "
+            f"({managed.raw_address}:{managed.raw_port})."
+        )
 
 
 def cmd_adopt(args: argparse.Namespace, runner: Runner, state: State) -> None:
@@ -447,7 +457,11 @@ def cmd_setup(
         if endpoint.port is None:
             print(f"Raw TCP access disabled for {name}.")
         elif endpoint.address:
-            print(f"{name} is available at {endpoint.address}:{endpoint.port}.")
+            hostname = avahi.raw_printer_hostnames(state).get(name)
+            print(
+                f"{name} is available as {hostname} at "
+                f"{endpoint.address}:{endpoint.port}."
+            )
         else:
             print(f"{name} is available at raw TCP port {endpoint.port}.")
 
@@ -504,7 +518,11 @@ def cmd_expose_raw(args: argparse.Namespace, runner: Runner, state: State) -> No
         interface = None
     _set_raw_port(runner, state, name, number, address, interface)
     if printer.raw_address:
-        print(f"{name} is available at {printer.raw_address}:{printer.raw_port}.")
+        hostname = avahi.raw_printer_hostnames(state).get(name)
+        print(
+            f"{name} is available as {hostname} at "
+            f"{printer.raw_address}:{printer.raw_port}."
+        )
     else:
         print(f"{name} is available at raw TCP port {number}.")
 
@@ -813,9 +831,9 @@ def _dispatch(args: argparse.Namespace) -> None:
             cups.remove_queue(runner, name)
             if not runner.dry_run:
                 del state.printers[name]
-                save_state(state)
                 if state.raw_proxy_service_managed or state.raw_address_service_managed:
                     _sync_raw_service(runner, state)
+                save_state(state)
             print(f"Removed {name}; no other queue was changed.")
     elif args.command == "list-printers":
         actual = cups.list_queues(runner)
@@ -835,6 +853,9 @@ def _dispatch(args: argparse.Namespace) -> None:
                     else str(managed.raw_port)
                 )
                 flags.append(f"raw-tcp={endpoint}")
+                hostname = avahi.raw_printer_hostnames(state).get(name)
+                if hostname:
+                    flags.append(f"bonjour={hostname}")
             print(f"{name}: {', '.join(flags)}")
     elif args.command == "discover-usb":
         devices = discover_usb(runner)

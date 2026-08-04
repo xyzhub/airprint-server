@@ -43,6 +43,21 @@ detection, but that cannot prevent a future DHCP lease collision if the
 addresses are left in the pool. The aliases are restored automatically at boot
 and removed when their exposure is disabled.
 
+Each dedicated endpoint is also advertised as an AppSocket printer using the
+standard `_pdl-datastream._tcp` DNS-SD service. The service uses the queue's
+friendly display name and a matching mDNS hostname. For example:
+
+```text
+BIXOLON SRP-E300
+bixolon-srp-e300-printer.local -> 192.168.1.240:9100
+```
+
+Bonjour-aware printer dialogs can discover the friendly name automatically.
+The `.local` hostname can also be entered instead of the numeric IP on clients
+that support mDNS. These names are multicast-DNS records, not separate DHCP
+leases: a router may still show all virtual addresses under the Raspberry Pi's
+single Wi-Fi or Ethernet hardware address.
+
 For an existing managed queue, the equivalent explicit command is:
 
 ```sh
@@ -83,4 +98,6 @@ systemctl status airprint-server-raw --no-pager
 systemctl status airprint-server-addresses --no-pager
 ip -4 address show
 sudo ss -ltnp | grep ':9100'
+avahi-browse -rt _pdl-datastream._tcp
+avahi-resolve-host-name bixolon-srp-e300-printer.local
 ```

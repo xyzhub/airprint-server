@@ -49,7 +49,9 @@ LAN, skips addresses already assigned to managed queues, checks candidates with
 ARP duplicate detection, and proposes an available address. Press Enter to
 accept it or type a different private address. Reserve or exclude the selected
 address from the router's DHCP pool. Raw exposure remains opt-in because the
-protocol is unauthenticated.
+protocol is unauthenticated. After confirmation, the wizard automatically
+publishes the printer's friendly display name and a dedicated `.local` hostname
+through Bonjour; no additional naming prompt or command is required.
 
 The fallback mode uses the Pi's primary address. Because one address cannot map
 two queues to the same TCP port, fallback queues use 9100, 9101, 9102, and so

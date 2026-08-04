@@ -11,6 +11,8 @@ drivers and custom PPD files. Managed queues can optionally be exposed back to
 the trusted LAN as raw TCP/JetDirect printers, allowing a USB printer to appear
 at its own dedicated virtual IPv4 address on standard port 9100. A shared
 Raspberry Pi address with distinct ports remains available as a fallback.
+Dedicated endpoints are advertised by printer name through Bonjour and receive
+matching `.local` hostnames such as `bixolon-srp-e300-printer.local`.
 
 ## Support and limitations
 
@@ -122,7 +124,8 @@ printer setup after installing the system components. The wizard:
    the queue as a raw TCP/JetDirect printer. Dedicated virtual IP mode lets
    every printer use standard port 9100. The wizard scans the Pi's connected
    private LAN, proposes an available address that can be accepted by pressing
-   Enter, and verifies that it is not currently answering ARP.
+   Enter, verifies that it is not currently answering ARP, and publishes the
+   printer's display name and dedicated `.local` hostname through Bonjour.
 6. When managed queues already exist, offers a separate screen to enable,
    change, or disable their standard Ethernet-printer access without recreating
    the CUPS queue or typing an `expose-raw` command.

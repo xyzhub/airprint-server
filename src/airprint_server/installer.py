@@ -199,6 +199,11 @@ def install(
         raw_proxy.install_service(runner, state)
     _report(progress, 3, "Starting CUPS and Avahi services")
     avahi.ensure_services(runner)
+    if not runner.dry_run and (
+        state.avahi_services
+        or any(printer.raw_address is not None for printer in state.printers.values())
+    ):
+        avahi.reconcile_raw_printer_services(runner, state)
     _report(progress, 4, "Configuring CUPS printer sharing")
     configure_cups(runner)
     _report(
@@ -257,6 +262,8 @@ def uninstall(
 ) -> None:
     require_root()
     raw_proxy.remove_service(runner, state)
+    if state.avahi_services:
+        avahi.remove_managed_printer_services(runner, state)
     if remove_queues and state.printers and confirm(
         f"Remove {len(state.printers)} managed CUPS queue(s)?"
     ):
