@@ -9,9 +9,12 @@ import yaml
 from conftest import FakeRunner
 
 from airprint_server import raw_proxy
+from airprint_server.commands import CommandResult
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.raw_proxy import (
     JobTooLargeError,
+    RawRoute,
+    apply_virtual_addresses,
     client_address_allowed,
     configured_routes,
     install_service,
@@ -20,6 +23,7 @@ from airprint_server.raw_proxy import (
     receive_raw_job,
     reconcile_service,
     remove_service,
+    resolve_virtual_interface,
 )
 
 
@@ -142,6 +146,122 @@ def test_routes_only_managed_printers_with_explicit_unique_ports() -> None:
     assert next_available_port(state) == 9102
 
 
+def test_routes_can_share_port_9100_on_distinct_virtual_addresses(tmp_path: Path) -> None:
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt", "Receipt", None, "usb://V/R", "usb", raw_port=9100,
+                raw_address="192.168.1.240", raw_interface="wlan0",
+            ),
+            "Labels": ManagedPrinter(
+                "Labels", "Labels", None, "usb://V/L", "usb", raw_port=9100,
+                raw_address="192.168.1.241", raw_interface="wlan0",
+            ),
+        }
+    )
+    config_path = tmp_path / "raw-proxy.yaml"
+
+    raw_proxy.write_routes(state, config_path)
+
+    assert load_routes(config_path) == [
+        RawRoute(9100, "Receipt", "192.168.1.240", "wlan0"),
+        RawRoute(9100, "Labels", "192.168.1.241", "wlan0"),
+    ]
+
+
+def test_resolves_virtual_address_to_connected_lan_interface() -> None:
+    command = ("ip", "-o", "-4", "address", "show", "scope", "global")
+    runner = FakeRunner(
+        {
+            command: CommandResult(
+                command,
+                0,
+                "2: wlan0    inet 192.168.1.20/24 brd 192.168.1.255 scope global wlan0\n",
+            )
+        }
+    )
+
+    assert resolve_virtual_interface(runner, "192.168.1.240") == "wlan0"  # type: ignore[arg-type]
+
+
+def test_reconciles_only_tracked_virtual_addresses(tmp_path: Path) -> None:
+    applied_path = tmp_path / "raw-addresses.yaml"
+    applied_path.write_text(
+        "version: 1\naddresses:\n  - address: 192.168.1.239\n    interface: wlan0\n",
+        encoding="utf-8",
+    )
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    probe = ("arping", "-D", "-c", "2", "-w", "3", "-I", "wlan0", "192.168.1.240")
+    runner = FakeRunner(
+        {
+            show: CommandResult(
+                show,
+                0,
+                "2: wlan0 inet 192.168.1.20/24 scope global wlan0\n",
+            ),
+            probe: CommandResult(probe, 0),
+        }
+    )
+
+    apply_virtual_addresses(
+        runner,  # type: ignore[arg-type]
+        [RawRoute(9100, "Receipt", "192.168.1.240", "wlan0")],
+        applied_path=applied_path,
+    )
+
+    assert ("ip", "address", "del", "192.168.1.239/32", "dev", "wlan0") in runner.calls
+    assert ("ip", "address", "add", "192.168.1.240/32", "dev", "wlan0") in runner.calls
+    assert yaml.safe_load(applied_path.read_text())["addresses"] == [
+        {"address": "192.168.1.240", "interface": "wlan0"}
+    ]
+
+
+def test_refuses_virtual_address_when_arp_duplicate_detection_fails(
+    tmp_path: Path,
+) -> None:
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    probe = ("arping", "-D", "-c", "2", "-w", "3", "-I", "wlan0", "192.168.1.240")
+    runner = FakeRunner(
+        {
+            show: CommandResult(show, 0, "2: wlan0 inet 192.168.1.20/24 scope global\n"),
+            probe: CommandResult(probe, 1, "", "duplicate detected"),
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="another LAN device"):
+        apply_virtual_addresses(
+            runner,  # type: ignore[arg-type]
+            [RawRoute(9100, "Receipt", "192.168.1.240", "wlan0")],
+            applied_path=tmp_path / "applied.yaml",
+        )
+
+    assert not any(call[:3] == ("ip", "address", "add") for call in runner.calls)
+
+
+def test_reapplies_tracked_virtual_address_after_reboot(tmp_path: Path) -> None:
+    applied_path = tmp_path / "raw-addresses.yaml"
+    applied_path.write_text(
+        "version: 1\naddresses:\n  - address: 192.168.1.240\n    interface: wlan0\n",
+        encoding="utf-8",
+    )
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    probe = ("arping", "-D", "-c", "2", "-w", "3", "-I", "wlan0", "192.168.1.240")
+    runner = FakeRunner(
+        {
+            show: CommandResult(show, 0, "2: wlan0 inet 192.168.1.20/24 scope global\n"),
+            probe: CommandResult(probe, 0),
+        }
+    )
+
+    apply_virtual_addresses(
+        runner,  # type: ignore[arg-type]
+        [RawRoute(9100, "Receipt", "192.168.1.240", "wlan0")],
+        applied_path=applied_path,
+    )
+
+    assert ("ip", "address", "add", "192.168.1.240/32", "dev", "wlan0") in runner.calls
+
+
 def test_managed_service_is_hardened_and_activated_for_configured_routes(
     tmp_path: Path,
 ) -> None:
@@ -178,8 +298,30 @@ def test_managed_service_is_hardened_and_activated_for_configured_routes(
     ]
     assert load_routes(config_path) == configured_routes(state)
     assert state.raw_proxy_service_managed
+    assert state.raw_address_service_managed
     assert ("systemctl", "enable", "airprint-server-raw.service") in runner.calls
     assert ("systemctl", "restart", "airprint-server-raw.service") in runner.calls
+
+
+def test_installs_hardened_root_address_service(tmp_path: Path) -> None:
+    service_path = tmp_path / "airprint-server-raw.service"
+    address_service_path = tmp_path / "airprint-server-addresses.service"
+    config_path = tmp_path / "raw-proxy.yaml"
+    state = State()
+
+    install_service(
+        FakeRunner(),  # type: ignore[arg-type]
+        state,
+        service_path=service_path,
+        address_service_path=address_service_path,
+        config_path=config_path,
+    )
+
+    unit = address_service_path.read_text()
+    assert "apply-raw-addresses" in unit
+    assert "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW" in unit
+    assert "RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_PACKET" in unit
+    assert "NoNewPrivileges=true" in unit
 
 
 def test_install_adopts_an_identical_service_when_management_state_was_lost(
@@ -226,10 +368,26 @@ def test_install_refuses_to_adopt_a_different_unmanaged_service(tmp_path: Path) 
         )
 
 
+def test_upgrade_does_not_overwrite_unmanaged_address_service(tmp_path: Path) -> None:
+    service_path = tmp_path / "airprint-server-raw.service"
+    address_service_path = tmp_path / "airprint-server-addresses.service"
+    service_path.write_text(raw_proxy.RAW_PROXY_SERVICE, encoding="utf-8")
+    address_service_path.write_text("[Service]\nExecStart=/unknown\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="unmanaged system service"):
+        install_service(
+            FakeRunner(),  # type: ignore[arg-type]
+            State(raw_proxy_service_managed=True),
+            service_path=service_path,
+            address_service_path=address_service_path,
+            config_path=tmp_path / "raw-proxy.yaml",
+        )
+
+
 def test_reconcile_stops_listener_when_no_ports_remain(tmp_path: Path) -> None:
     service_path = tmp_path / "airprint-server-raw.service"
     config_path = tmp_path / "raw-proxy.yaml"
-    state = State(raw_proxy_service_managed=True)
+    state = State(raw_proxy_service_managed=True, raw_address_service_managed=True)
     runner = FakeRunner()
 
     reconcile_service(

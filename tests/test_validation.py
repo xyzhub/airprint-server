@@ -4,9 +4,11 @@ from airprint_server.validation import (
     ValidationError,
     device_uri,
     host,
+    network_interface,
     port,
     queue_name,
     socket_uri,
+    virtual_ipv4,
 )
 
 
@@ -49,3 +51,21 @@ def test_device_uri_allowlist() -> None:
         device_uri("evil://host/value")
     assert device_uri("vendor://host/value", allow_custom=True).startswith("vendor:")
 
+
+@pytest.mark.parametrize("value", ["10.0.0.240", "172.16.4.20", "192.168.1.240"])
+def test_virtual_printer_addresses_must_be_private_ipv4(value: str) -> None:
+    assert virtual_ipv4(value) == value
+
+
+@pytest.mark.parametrize(
+    "value", ["8.8.8.8", "127.0.0.2", "169.254.1.2", "::1", "not-an-address"]
+)
+def test_virtual_printer_addresses_reject_unsafe_ranges(value: str) -> None:
+    with pytest.raises(ValidationError):
+        virtual_ipv4(value)
+
+
+def test_network_interface_rejects_command_syntax() -> None:
+    assert network_interface("wlan0") == "wlan0"
+    with pytest.raises(ValidationError):
+        network_interface("wlan0;reboot")

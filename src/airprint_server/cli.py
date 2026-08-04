@@ -36,12 +36,14 @@ from airprint_server.validation import (
     ValidationError,
     device_uri,
     host,
+    network_interface,
     port,
     queue_name,
     readable_ppd,
     socket_uri,
+    virtual_ipv4,
 )
-from airprint_server.wizard import WizardSelection, run_wizard
+from airprint_server.wizard import RawEndpointSelection, WizardSelection, run_wizard
 from airprint_server.xprinter_driver import (
     XPRINTER_CUPS_OPTIONS,
     XPrinterInstallation,
@@ -59,31 +61,96 @@ XPRINTER_PROFILE_MODELS = {
 
 
 def _sync_raw_service(runner: Runner, state: State) -> None:
-    if state.raw_proxy_service_managed:
+    if state.raw_proxy_service_managed and state.raw_address_service_managed:
         raw_proxy.reconcile_service(runner, state)
     else:
         raw_proxy.install_service(runner, state)
 
 
-def _set_raw_port(runner: Runner, state: State, name: str, number: int | None) -> None:
-    printer = state.printers.get(name)
-    if not printer:
-        raise ValidationError(f"{name!r} is not a managed queue")
-    if number is not None:
+def _prepare_raw_endpoint(
+    runner: Runner,
+    state: State,
+    name: str,
+    number: int | None,
+    address: str | None,
+    interface: str | None,
+) -> tuple[int | None, str | None, str | None]:
+    checked_address = virtual_ipv4(address) if address else None
+    checked_number = port(number) if number is not None else None
+    checked_interface: str | None = None
+    if checked_address:
+        checked_number = checked_number or raw_proxy.DEFAULT_RAW_PORT
+        if checked_number != raw_proxy.DEFAULT_RAW_PORT:
+            raise ValidationError("dedicated virtual printer addresses use standard port 9100")
+        resolved_interface = raw_proxy.resolve_virtual_interface(runner, checked_address)
+        if interface and network_interface(interface) != resolved_interface:
+            raise ValidationError(
+                f"{checked_address} is connected through {resolved_interface}, not {interface}"
+            )
+        checked_interface = resolved_interface
+        existing = state.printers.get(name)
+        if not existing or existing.raw_address != checked_address:
+            raw_proxy.validate_virtual_address_available(
+                runner,
+                checked_address,
+                checked_interface,
+            )
+    elif interface:
+        raise ValidationError("--interface requires --address")
+    if checked_number is not None:
         conflict = next(
             (
                 item.name
                 for item in state.printers.values()
-                if item.name != name and item.raw_port == number
+                if item.name != name
+                and (
+                    (checked_address is not None and item.raw_address == checked_address)
+                    or (
+                        item.raw_port == checked_number
+                        and (
+                            checked_address is None
+                            or item.raw_address is None
+                            or item.raw_address == checked_address
+                        )
+                    )
+                )
             ),
             None,
         )
         if conflict:
-            raise ValidationError(f"raw TCP port {number} is already assigned to {conflict}")
-    printer.raw_port = number
+            endpoint = (
+                f"{checked_address}:{checked_number}"
+                if checked_address
+                else f"port {checked_number}"
+            )
+            raise ValidationError(f"raw TCP {endpoint} is already assigned to {conflict}")
+    return checked_number, checked_address, checked_interface
+
+
+def _set_raw_port(
+    runner: Runner,
+    state: State,
+    name: str,
+    number: int | None,
+    address: str | None = None,
+    interface: str | None = None,
+) -> None:
+    printer = state.printers.get(name)
+    if not printer:
+        raise ValidationError(f"{name!r} is not a managed queue")
+    checked_number, checked_address, checked_interface = _prepare_raw_endpoint(
+        runner, state, name, number, address, interface
+    )
+    printer.raw_port = checked_number
+    printer.raw_address = checked_address
+    printer.raw_interface = checked_interface
     if runner.dry_run:
         return
-    if number is not None or state.raw_proxy_service_managed:
+    if (
+        checked_number is not None
+        or state.raw_proxy_service_managed
+        or state.raw_address_service_managed
+    ):
         _sync_raw_service(runner, state)
     save_state(state)
 
@@ -190,26 +257,32 @@ def cmd_add(
             f"CUPS queue {name!r} already exists and is unmanaged; use adopt-printer first"
         )
     requested_raw_port = getattr(args, "raw_port", None)
+    requested_raw_address = getattr(args, "raw_address", None)
+    requested_raw_interface = getattr(args, "raw_interface", None)
     existing = state.printers.get(name)
     selected_raw_port = (
         requested_raw_port
         if requested_raw_port is not None
         else existing.raw_port if existing else None
     )
-    if selected_raw_port is not None:
-        selected_raw_port = port(selected_raw_port)
-        conflict = next(
-            (
-                printer.name
-                for printer in state.printers.values()
-                if printer.name != name and printer.raw_port == selected_raw_port
-            ),
-            None,
-        )
-        if conflict:
-            raise ValidationError(
-                f"raw TCP port {selected_raw_port} is already assigned to {conflict}"
-            )
+    selected_raw_address = (
+        requested_raw_address
+        if requested_raw_address is not None
+        else existing.raw_address if existing else None
+    )
+    selected_raw_interface = (
+        requested_raw_interface
+        if requested_raw_interface is not None
+        else existing.raw_interface if existing else None
+    )
+    selected_raw_port, selected_raw_address, selected_raw_interface = _prepare_raw_endpoint(
+        runner,
+        state,
+        name,
+        selected_raw_port,
+        selected_raw_address,
+        selected_raw_interface,
+    )
     official_bixolon_ppd = installed_bixolon_ppd(state)
     can_use_automatic_bixolon = bool(
         selected
@@ -291,6 +364,8 @@ def cmd_add(
         cups_options=options,
         adopted=bool(args.adopt),
         raw_port=selected_raw_port,
+        raw_address=selected_raw_address,
+        raw_interface=selected_raw_interface,
     )
     print(f"Queue: {name}\nURI: {uri}\nDriver: {ppd or driver or 'driverless'}")
     if not _confirm("Create or update this queue?", args.yes):
@@ -299,7 +374,11 @@ def cmd_add(
     cups.create_or_update_queue(runner, managed)
     state.printers[name] = managed
     if not runner.dry_run:
-        if managed.raw_port is not None or state.raw_proxy_service_managed:
+        if (
+            managed.raw_port is not None
+            or state.raw_proxy_service_managed
+            or state.raw_address_service_managed
+        ):
             _sync_raw_service(runner, state)
         save_state(state)
     print(f"Managed and shared CUPS queue {name}.")
@@ -351,15 +430,26 @@ def cmd_setup(
             adopt=False,
             yes=args.yes,
             raw_port=selection.raw_port,
+            raw_address=selection.raw_address,
+            raw_interface=selection.raw_interface,
         )
         cmd_add(add_args, runner, state, profiles)
 
-    def set_raw_exposure(name: str, number: int | None) -> None:
-        _set_raw_port(runner, state, name, number)
-        if number is None:
+    def set_raw_exposure(name: str, endpoint: RawEndpointSelection) -> None:
+        _set_raw_port(
+            runner,
+            state,
+            name,
+            endpoint.port,
+            endpoint.address,
+            endpoint.interface,
+        )
+        if endpoint.port is None:
             print(f"Raw TCP access disabled for {name}.")
+        elif endpoint.address:
+            print(f"{name} is available at {endpoint.address}:{endpoint.port}.")
         else:
-            print(f"{name} is available at raw TCP port {number}.")
+            print(f"{name} is available at raw TCP port {endpoint.port}.")
 
     preferred_ppds: dict[str, Path] = {}
     official_ppd = installed_bixolon_ppd(state)
@@ -374,12 +464,14 @@ def cmd_setup(
         profiles,
         add_selection,
         preferred_ppds=preferred_ppds,
-        raw_port_owners={
-            printer.raw_port: printer.name
-            for printer in state.printers.values()
-            if printer.raw_port is not None
+        managed_raw_endpoints={
+            name: RawEndpointSelection(
+                printer.raw_port,
+                printer.raw_address,
+                printer.raw_interface,
+            )
+            for name, printer in state.printers.items()
         },
-        managed_raw_ports={name: printer.raw_port for name, printer in state.printers.items()},
         set_raw_exposure=set_raw_exposure,
     )
 
@@ -390,13 +482,31 @@ def cmd_expose_raw(args: argparse.Namespace, runner: Runner, state: State) -> No
     printer = state.printers.get(name)
     if not printer:
         raise ValidationError(f"{name!r} is not a managed queue")
-    number = (
-        port(args.port)
-        if args.port is not None
-        else printer.raw_port or raw_proxy.next_available_port(state)
-    )
-    _set_raw_port(runner, state, name, number)
-    print(f"{name} is available at raw TCP port {number}.")
+    requested_address = getattr(args, "address", None)
+    requested_interface = getattr(args, "interface", None)
+    if requested_interface and not requested_address:
+        raise ValidationError("--interface requires --address")
+    if requested_address:
+        number = port(args.port) if args.port is not None else raw_proxy.DEFAULT_RAW_PORT
+        address = requested_address
+        interface = requested_interface
+    elif printer.raw_address and args.port is None:
+        number = printer.raw_port or raw_proxy.DEFAULT_RAW_PORT
+        address = printer.raw_address
+        interface = printer.raw_interface
+    else:
+        number = (
+            port(args.port)
+            if args.port is not None
+            else printer.raw_port or raw_proxy.next_available_port(state)
+        )
+        address = None
+        interface = None
+    _set_raw_port(runner, state, name, number, address, interface)
+    if printer.raw_address:
+        print(f"{name} is available at {printer.raw_address}:{printer.raw_port}.")
+    else:
+        print(f"{name} is available at raw TCP port {number}.")
 
 
 def cmd_unexpose_raw(args: argparse.Namespace, runner: Runner, state: State) -> None:
@@ -451,6 +561,8 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--host", type=host)
     add.add_argument("--port", type=port, default=9100)
     add.add_argument("--raw-port", type=port)
+    add.add_argument("--raw-address", type=virtual_ipv4)
+    add.add_argument("--raw-interface", type=network_interface)
     add.add_argument("--disable-snmp", action="store_true")
     add.add_argument("--device-uri")
     driver = add.add_mutually_exclusive_group()
@@ -465,6 +577,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     expose.add_argument("printer")
     expose.add_argument("--port", type=port)
+    expose.add_argument("--address", type=virtual_ipv4)
+    expose.add_argument("--interface", type=network_interface)
     unexpose = sub.add_parser(
         "unexpose-raw", parents=[common], help="disable raw TCP access for a managed queue"
     )
@@ -515,12 +629,25 @@ def build_parser() -> argparse.ArgumentParser:
         "serve-raw", help="run the managed raw TCP gateway service"
     )
     serve_raw.add_argument("--config", type=Path, default=raw_proxy.RAW_PROXY_CONFIG_PATH)
+    apply_addresses = sub.add_parser("apply-raw-addresses", help=argparse.SUPPRESS)
+    apply_addresses.add_argument("--config", type=Path, default=raw_proxy.RAW_PROXY_CONFIG_PATH)
+    apply_addresses.add_argument(
+        "--applied-state", type=Path, default=raw_proxy.RAW_ADDRESSES_APPLIED_PATH
+    )
     return parser
 
 
 def _dispatch(args: argparse.Namespace) -> None:
     if args.command == "serve-raw":
         raw_proxy.serve_config(args.config)
+        return
+    if args.command == "apply-raw-addresses":
+        _root()
+        raw_proxy.apply_configured_virtual_addresses(
+            Runner(),
+            config_path=args.config,
+            applied_path=args.applied_state,
+        )
         return
     runner = Runner(dry_run=args.dry_run)
     state = load_state()
@@ -687,8 +814,8 @@ def _dispatch(args: argparse.Namespace) -> None:
             if not runner.dry_run:
                 del state.printers[name]
                 save_state(state)
-                if state.raw_proxy_service_managed:
-                    raw_proxy.reconcile_service(runner, state)
+                if state.raw_proxy_service_managed or state.raw_address_service_managed:
+                    _sync_raw_service(runner, state)
             print(f"Removed {name}; no other queue was changed.")
     elif args.command == "list-printers":
         actual = cups.list_queues(runner)
@@ -702,7 +829,12 @@ def _dispatch(args: argparse.Namespace) -> None:
                 flags.append("missing")
             managed = state.printers.get(name)
             if managed and managed.raw_port is not None:
-                flags.append(f"raw-tcp={managed.raw_port}")
+                endpoint = (
+                    f"{managed.raw_address}:{managed.raw_port}"
+                    if managed.raw_address
+                    else str(managed.raw_port)
+                )
+                flags.append(f"raw-tcp={endpoint}")
             print(f"{name}: {', '.join(flags)}")
     elif args.command == "discover-usb":
         devices = discover_usb(runner)

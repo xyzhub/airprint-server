@@ -131,17 +131,22 @@ def diagnose(
             Check(
                 service_running,
                 "Raw TCP gateway running",
-                f"port {printer.raw_port}",
+                (
+                    f"{printer.raw_address}:{printer.raw_port}"
+                    if printer.raw_address
+                    else f"port {printer.raw_port}"
+                ),
                 f"sudo systemctl status {raw_proxy.RAW_PROXY_SERVICE_NAME}",
             )
         )
-        reachable, detail = tcp_reachable("127.0.0.1", printer.raw_port)
+        listener_address = printer.raw_address or "127.0.0.1"
+        reachable, detail = tcp_reachable(listener_address, printer.raw_port)
         checks.append(
             Check(
                 reachable,
                 "Raw TCP listener reachable",
                 detail,
-                f"nc -vz 127.0.0.1 {printer.raw_port}",
+                f"nc -vz {listener_address} {printer.raw_port}",
             )
         )
     if avahi_installed and exists:
@@ -212,7 +217,12 @@ def diagnose(
 
 
 def recent_logs(runner: Runner, *, include_ipp_usb: bool = False) -> str:
-    services = ["cups.service", "avahi-daemon.service", raw_proxy.RAW_PROXY_SERVICE_NAME]
+    services = [
+        "cups.service",
+        "avahi-daemon.service",
+        raw_proxy.RAW_ADDRESS_SERVICE_NAME,
+        raw_proxy.RAW_PROXY_SERVICE_NAME,
+    ]
     if include_ipp_usb:
         services.append("ipp-usb.service")
     service_args = [value for service in services for value in ("-u", service)]

@@ -55,3 +55,69 @@ def test_raw_tcp_port_round_trips_and_duplicate_ports_are_rejected(tmp_path: Pat
     path.write_text(yaml.safe_dump(duplicate), encoding="utf-8")
     with pytest.raises(ValidationError, match="raw TCP port 9100"):
         load_state(path)
+
+
+def test_dedicated_addresses_allow_every_printer_to_use_port_9100(tmp_path: Path) -> None:
+    path = tmp_path / "state.yaml"
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt",
+                "Receipt",
+                None,
+                "usb://Vendor/Receipt",
+                "usb",
+                raw_port=9100,
+                raw_address="192.168.1.240",
+                raw_interface="wlan0",
+            ),
+            "Labels": ManagedPrinter(
+                "Labels",
+                "Labels",
+                None,
+                "usb://Vendor/Labels",
+                "usb",
+                raw_port=9100,
+                raw_address="192.168.1.241",
+                raw_interface="wlan0",
+            ),
+        }
+    )
+
+    save_state(state, path)
+    loaded = load_state(path)
+
+    assert loaded.printers["Receipt"].raw_address == "192.168.1.240"
+    assert loaded.printers["Labels"].raw_port == 9100
+
+
+def test_duplicate_dedicated_address_and_port_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "state.yaml"
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt",
+                "Receipt",
+                None,
+                "usb://Vendor/Receipt",
+                "usb",
+                raw_port=9100,
+                raw_address="192.168.1.240",
+                raw_interface="wlan0",
+            ),
+            "Labels": ManagedPrinter(
+                "Labels",
+                "Labels",
+                None,
+                "usb://Vendor/Labels",
+                "usb",
+                raw_port=9100,
+                raw_address="192.168.1.240",
+                raw_interface="wlan0",
+            ),
+        }
+    )
+    save_state(state, path)
+
+    with pytest.raises(ValidationError, match="virtual address 192.168.1.240"):
+        load_state(path)

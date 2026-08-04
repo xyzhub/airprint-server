@@ -35,8 +35,10 @@ listener before testing from another computer:
 ```sh
 sudo airprint-server status
 systemctl status airprint-server-raw --no-pager
-nc -vz 127.0.0.1 9100
-journalctl -u airprint-server-raw -u cups --no-pager -n 50
+systemctl status airprint-server-addresses --no-pager
+ip -4 address show
+nc -vz VIRTUAL_PRINTER_IP 9100
+journalctl -u airprint-server-addresses -u airprint-server-raw -u cups --no-pager -n 50
 ```
 
 Raw clients must send printer-ready bytes produced by the correct client-side

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from airprint_server import raw_proxy
 from airprint_server.commands import Runner
 from airprint_server.discovery import USBDevice, discover_usb, parse_lpinfo_ipp_uris
 from airprint_server.profiles import PrinterProfile
@@ -19,6 +20,7 @@ from airprint_server.validation import (
     queue_name,
     readable_ppd,
     socket_uri,
+    virtual_ipv4,
 )
 
 Input = Callable[[str], str]
@@ -52,6 +54,15 @@ class WizardSelection:
     driver: str | None
     ppd: str | None
     raw_port: int | None = None
+    raw_address: str | None = None
+    raw_interface: str | None = None
+
+
+@dataclass(frozen=True)
+class RawEndpointSelection:
+    port: int | None = None
+    address: str | None = None
+    interface: str | None = None
 
 
 def parse_driver_models(output: str) -> list[DriverModel]:
@@ -394,6 +405,7 @@ def collect_printer(
     preferred_ppds: Mapping[str, Path] | None = None,
     used_raw_ports: set[int] | None = None,
     raw_port_owners: Mapping[int, str] | None = None,
+    raw_address_owners: Mapping[str, str] | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> WizardSelection | None:
@@ -424,6 +436,8 @@ def collect_printer(
         output=output,
     )
     raw_port: int | None = None
+    raw_address: str | None = None
+    raw_interface: str | None = None
     occupied = set(used_raw_ports or ())
     occupied.update(
         number for number, owner in (raw_port_owners or {}).items() if owner != name
@@ -433,25 +447,58 @@ def collect_printer(
         default=False,
         input_fn=input_fn,
     ):
-        suggested = next(
-            candidate for candidate in range(9100, 65536) if candidate not in occupied
+        current_address = next(
+            (
+                address
+                for address, owner in (raw_address_owners or {}).items()
+                if owner == name
+            ),
+            None,
         )
+        if _yes_no(
+            "Give this printer a dedicated virtual IP and use standard port 9100?",
+            default=True,
+            input_fn=input_fn,
+        ):
+            def available_raw_address(value: str) -> str:
+                selected = virtual_ipv4(value)
+                owner = (raw_address_owners or {}).get(selected)
+                if owner and owner != name:
+                    raise ValidationError(f"virtual address {selected} is assigned to {owner}")
+                return selected
 
-        def available_raw_port(value: str) -> int:
-            selected = port(value)
-            if selected in occupied:
-                raise ValidationError(f"raw TCP port {selected} is already assigned")
-            return selected
-
-        raw_port = int(
-            _validated(
-                "Raw TCP listen port",
-                available_raw_port,
-                default=str(suggested),
+            raw_address = _validated(
+                "Unused private IPv4 address reserved for this printer",
+                available_raw_address,
+                default=current_address,
                 input_fn=input_fn,
                 output=output,
             )
-        )
+            raw_interface = raw_proxy.resolve_virtual_interface(runner, raw_address)
+            raw_port = raw_proxy.DEFAULT_RAW_PORT
+            output(
+                f"The Pi will manage {raw_address}/32 on {raw_interface} for this printer."
+            )
+        else:
+            suggested = next(
+                candidate for candidate in range(9100, 65536) if candidate not in occupied
+            )
+
+            def available_raw_port(value: str) -> int:
+                selected = port(value)
+                if selected in occupied:
+                    raise ValidationError(f"raw TCP port {selected} is already assigned")
+                return selected
+
+            raw_port = int(
+                _validated(
+                    "Raw TCP listen port",
+                    available_raw_port,
+                    default=str(suggested),
+                    input_fn=input_fn,
+                    output=output,
+                )
+            )
     return WizardSelection(
         name=name,
         description=description,
@@ -461,6 +508,8 @@ def collect_printer(
         driver=driver,
         ppd=ppd,
         raw_port=raw_port,
+        raw_address=raw_address,
+        raw_interface=raw_interface,
     )
 
 
@@ -469,22 +518,28 @@ def _invalid_description() -> str:
 
 
 def configure_existing_raw_exposure(
-    managed_raw_ports: Mapping[str, int | None],
-    set_raw_exposure: Callable[[str, int | None], None],
+    runner: Runner,
+    managed_raw_endpoints: Mapping[str, RawEndpointSelection],
+    set_raw_exposure: Callable[[str, RawEndpointSelection], None],
     *,
     input_fn: Input = input,
     output: Output = print,
 ) -> None:
-    if not managed_raw_ports or not _yes_no(
+    if not managed_raw_endpoints or not _yes_no(
         "Configure standard Ethernet-printer access for an existing queue?",
         default=False,
         input_fn=input_fn,
     ):
         return
-    names = sorted(managed_raw_ports)
+    names = sorted(managed_raw_endpoints)
     labels = [
-        f"{name} — raw TCP port {managed_raw_ports[name]}"
-        if managed_raw_ports[name] is not None
+        (
+            f"{name} — {managed_raw_endpoints[name].address}:"
+            f"{managed_raw_endpoints[name].port}"
+        )
+        if managed_raw_endpoints[name].address is not None
+        else f"{name} — raw TCP port {managed_raw_endpoints[name].port}"
+        if managed_raw_endpoints[name].port is not None
         else f"{name} — AirPrint only"
         for name in names
     ]
@@ -496,26 +551,61 @@ def configure_existing_raw_exposure(
             output=output,
         )
     ]
-    current = managed_raw_ports[name]
+    current = managed_raw_endpoints[name]
     if not _yes_no(
         f"Make {name} available as a standard raw TCP/JetDirect printer?",
         default=True,
         input_fn=input_fn,
     ):
-        set_raw_exposure(name, None)
+        set_raw_exposure(name, RawEndpointSelection())
         return
-    occupied = {
-        number
-        for queue, number in managed_raw_ports.items()
-        if queue != name and number is not None
+    if _yes_no(
+        "Give this printer a dedicated virtual IP and use standard port 9100?",
+        default=True,
+        input_fn=input_fn,
+    ):
+        occupied_addresses = {
+            endpoint.address: queue
+            for queue, endpoint in managed_raw_endpoints.items()
+            if queue != name and endpoint.address is not None
+        }
+
+        def available_raw_address(value: str) -> str:
+            selected = virtual_ipv4(value)
+            owner = occupied_addresses.get(selected)
+            if owner:
+                raise ValidationError(f"virtual address {selected} is assigned to {owner}")
+            return selected
+
+        selected_address = _validated(
+            "Unused private IPv4 address reserved for this printer",
+            available_raw_address,
+            default=current.address,
+            input_fn=input_fn,
+            output=output,
+        )
+        selected_interface = raw_proxy.resolve_virtual_interface(runner, selected_address)
+        set_raw_exposure(
+            name,
+            RawEndpointSelection(
+                raw_proxy.DEFAULT_RAW_PORT,
+                selected_address,
+                selected_interface,
+            ),
+        )
+        return
+    occupied_ports = {
+        endpoint.port
+        for queue, endpoint in managed_raw_endpoints.items()
+        if queue != name and endpoint.port is not None
     }
-    suggested = current or next(
-        candidate for candidate in range(9100, 65536) if candidate not in occupied
+    suggested = current.port if current.address is None and current.port else next(
+        candidate for candidate in range(9100, 65536) if candidate not in occupied_ports
     )
 
     def available_raw_port(value: str) -> int:
         selected = port(value)
-        if selected in occupied:
+        if selected in occupied_ports:
             raise ValidationError(f"raw TCP port {selected} is already assigned")
         return selected
 
@@ -528,7 +618,7 @@ def configure_existing_raw_exposure(
             output=output,
         )
     )
-    set_raw_exposure(name, selected_port)
+    set_raw_exposure(name, RawEndpointSelection(selected_port))
 
 
 def run_wizard(
@@ -539,12 +629,24 @@ def run_wizard(
     preferred_ppds: Mapping[str, Path] | None = None,
     used_raw_ports: set[int] | None = None,
     raw_port_owners: Mapping[int, str] | None = None,
-    managed_raw_ports: Mapping[str, int | None] | None = None,
-    set_raw_exposure: Callable[[str, int | None], None] | None = None,
+    managed_raw_endpoints: Mapping[str, RawEndpointSelection] | None = None,
+    set_raw_exposure: Callable[[str, RawEndpointSelection], None] | None = None,
     input_fn: Input = input,
     output: Output = print,
 ) -> None:
     occupied_raw_port_owners = dict(raw_port_owners or {})
+    occupied_raw_address_owners = {
+        endpoint.address: name
+        for name, endpoint in (managed_raw_endpoints or {}).items()
+        if endpoint.address is not None
+    }
+    for name, endpoint in (managed_raw_endpoints or {}).items():
+        if endpoint.port is None:
+            continue
+        previous = occupied_raw_port_owners.get(endpoint.port)
+        occupied_raw_port_owners[endpoint.port] = (
+            "" if previous is not None and previous != name else name
+        )
     for number in used_raw_ports or ():
         occupied_raw_port_owners.setdefault(number, "")
     output("")
@@ -552,17 +654,26 @@ def run_wizard(
     output("============================")
     output("The wizard will discover printers and create only the queues you confirm.")
     output("Supported vendor drivers will be offered for download when they are needed.")
-    if managed_raw_ports and set_raw_exposure:
-        def record_raw_exposure(name: str, number: int | None) -> None:
-            set_raw_exposure(name, number)
-            for assigned, owner in list(occupied_raw_port_owners.items()):
+    if managed_raw_endpoints and set_raw_exposure:
+        def record_raw_exposure(name: str, endpoint: RawEndpointSelection) -> None:
+            set_raw_exposure(name, endpoint)
+            for assigned_port, owner in list(occupied_raw_port_owners.items()):
                 if owner == name:
-                    del occupied_raw_port_owners[assigned]
-            if number is not None:
-                occupied_raw_port_owners[number] = name
+                    del occupied_raw_port_owners[assigned_port]
+            for assigned_address, owner in list(occupied_raw_address_owners.items()):
+                if owner == name:
+                    del occupied_raw_address_owners[assigned_address]
+            if endpoint.port is not None:
+                previous = occupied_raw_port_owners.get(endpoint.port)
+                occupied_raw_port_owners[endpoint.port] = (
+                    "" if previous is not None and previous != name else name
+                )
+            if endpoint.address is not None:
+                occupied_raw_address_owners[endpoint.address] = name
 
         configure_existing_raw_exposure(
-            managed_raw_ports,
+            runner,
+            managed_raw_endpoints,
             record_raw_exposure,
             input_fn=input_fn,
             output=output,
@@ -573,6 +684,7 @@ def run_wizard(
             profiles,
             preferred_ppds=preferred_ppds,
             raw_port_owners=occupied_raw_port_owners,
+            raw_address_owners=occupied_raw_address_owners,
             input_fn=input_fn,
             output=output,
         )
@@ -586,7 +698,14 @@ def run_wizard(
             if owner != selection.name
         }
         if selection.raw_port is not None:
-            occupied_raw_port_owners[selection.raw_port] = selection.name
+            previous = occupied_raw_port_owners.get(selection.raw_port)
+            occupied_raw_port_owners[selection.raw_port] = (
+                ""
+                if previous is not None and previous != selection.name
+                else selection.name
+            )
+        if selection.raw_address is not None:
+            occupied_raw_address_owners[selection.raw_address] = selection.name
         if not _yes_no("Add another printer?", default=False, input_fn=input_fn):
             output("Setup wizard finished.")
             return

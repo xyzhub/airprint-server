@@ -11,6 +11,10 @@ QUEUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,126}$")
 PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 ALLOWED_SCHEMES = {"socket", "usb", "ipp", "ipps", "lpd", "http", "https"}
+INTERFACE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$")
+PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 
 
 class ValidationError(ValueError):
@@ -53,6 +57,28 @@ def port(value: int | str) -> int:
     if not 1 <= parsed <= 65535:
         raise ValidationError("port must be between 1 and 65535")
     return parsed
+
+
+def virtual_ipv4(value: str) -> str:
+    candidate = value.strip()
+    try:
+        address = ipaddress.ip_address(candidate)
+    except ValueError as exc:
+        raise ValidationError("virtual printer address must be a private IPv4 address") from exc
+    if not isinstance(address, ipaddress.IPv4Address) or not any(
+        address in network for network in PRIVATE_IPV4_NETWORKS
+    ):
+        raise ValidationError("virtual printer address must use a private IPv4 LAN range")
+    return str(address)
+
+
+def network_interface(value: str) -> str:
+    candidate = value.strip()
+    if not INTERFACE_RE.fullmatch(candidate):
+        raise ValidationError(
+            "network interface must be 1-15 letters, numbers, '.', '_' or '-'"
+        )
+    return candidate
 
 
 def device_uri(value: str, *, allow_custom: bool = False) -> str:

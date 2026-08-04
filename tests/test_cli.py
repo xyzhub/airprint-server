@@ -11,6 +11,7 @@ from airprint_server.bixolon_driver import BIXOLON_CUPS_OPTIONS, BixolonInstalla
 from airprint_server.cli import build_parser, cmd_add, cmd_expose_raw, main
 from airprint_server.config import ManagedPrinter, State
 from airprint_server.profiles import load_profiles
+from airprint_server.validation import ValidationError
 from airprint_server.xprinter_driver import XPRINTER_CUPS_OPTIONS, XPrinterInstallation
 
 
@@ -305,7 +306,7 @@ def test_running_utility_without_command_starts_setup(
 
 
 def test_add_printer_records_requested_raw_listener(monkeypatch: pytest.MonkeyPatch) -> None:
-    state = State(raw_proxy_service_managed=True)
+    state = State(raw_proxy_service_managed=True, raw_address_service_managed=True)
     configured: list[ManagedPrinter] = []
     reconciled: list[int | None] = []
     monkeypatch.setattr("airprint_server.cli._root", lambda: None)
@@ -366,10 +367,72 @@ def test_expose_raw_repairs_missing_managed_service(
     assert state.printers["Receipt"].raw_port == 9100
 
 
+def test_expose_raw_assigns_virtual_ip_and_standard_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt", "Receipt", None, "usb://Vendor/Receipt?serial=1", "usb"
+            )
+        },
+        raw_proxy_service_managed=True,
+        raw_address_service_managed=True,
+    )
+    synced: list[tuple[str | None, int | None]] = []
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+    monkeypatch.setattr("airprint_server.cli.save_state", lambda _state: None)
+    monkeypatch.setattr(
+        "airprint_server.cli.raw_proxy.resolve_virtual_interface",
+        lambda _runner, _address: "wlan0",
+    )
+    monkeypatch.setattr(
+        "airprint_server.cli.raw_proxy.reconcile_service",
+        lambda _runner, current: synced.append(
+            (
+                current.printers["Receipt"].raw_address,
+                current.printers["Receipt"].raw_port,
+            )
+        ),
+    )
+    args = argparse.Namespace(
+        printer="Receipt", port=None, address="192.168.1.240", interface=None
+    )
+
+    cmd_expose_raw(args, FakeRunner(), state)  # type: ignore[arg-type]
+
+    assert synced == [("192.168.1.240", 9100)]
+    assert state.printers["Receipt"].raw_interface == "wlan0"
+
+
+def test_expose_raw_rejects_interface_without_virtual_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = State(
+        printers={
+            "Receipt": ManagedPrinter(
+                "Receipt", "Receipt", None, "usb://Vendor/Receipt?serial=1", "usb"
+            )
+        }
+    )
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+
+    with pytest.raises(ValidationError, match="--interface requires --address"):
+        cmd_expose_raw(
+            argparse.Namespace(printer="Receipt", port=None, address=None, interface="wlan0"),
+            FakeRunner(),  # type: ignore[arg-type]
+            state,
+        )
+
+
 def test_raw_exposure_commands_parse_valid_ports() -> None:
     parser = build_parser()
     assert parser.parse_args(["expose-raw", "Receipt"]).port is None
     assert parser.parse_args(["expose-raw", "Receipt", "--port", "9101"]).port == 9101
+    dedicated = parser.parse_args(
+        ["expose-raw", "Receipt", "--address", "192.168.1.240"]
+    )
+    assert dedicated.address == "192.168.1.240"
     assert parser.parse_args(["unexpose-raw", "Receipt"]).printer == "Receipt"
 
 
@@ -387,3 +450,33 @@ def test_raw_service_command_does_not_read_root_only_state(
 
     assert main(["serve-raw", "--config", str(config)]) == 0
     assert served == [config]
+
+
+def test_address_service_command_does_not_read_main_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "raw-proxy.yaml"
+    applied = tmp_path / "raw-addresses.yaml"
+    configured: list[tuple[Path, Path]] = []
+    monkeypatch.setattr("airprint_server.cli._root", lambda: None)
+    monkeypatch.setattr(
+        "airprint_server.cli.load_state",
+        lambda: pytest.fail("apply-raw-addresses must not read the main state file"),
+    )
+    monkeypatch.setattr(
+        "airprint_server.cli.raw_proxy.apply_configured_virtual_addresses",
+        lambda _runner, *, config_path, applied_path: configured.append(
+            (config_path, applied_path)
+        ),
+    )
+
+    assert main(
+        [
+            "apply-raw-addresses",
+            "--config",
+            str(config),
+            "--applied-state",
+            str(applied),
+        ]
+    ) == 0
+    assert configured == [(config, applied)]

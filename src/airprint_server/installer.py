@@ -33,6 +33,8 @@ RUNTIME_PACKAGES = [
     "python3",
     "python3-venv",
     "python3-yaml",
+    "iproute2",
+    "iputils-arping",
 ]
 BUILD_PACKAGES = ["build-essential", "libcups2-dev", "cups-ppdc"]
 SUPPORTED_IDS = {"debian", "raspbian"}

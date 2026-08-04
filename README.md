@@ -9,7 +9,8 @@ media defaults; connection settings independently select USB, raw socket, IPP,
 IPPS, LPD, or another CUPS URI. This separation also supports installed vendor
 drivers and custom PPD files. Managed queues can optionally be exposed back to
 the trusted LAN as raw TCP/JetDirect printers, allowing a USB printer to appear
-at the Raspberry Pi's address on port 9100.
+at its own dedicated virtual IPv4 address on standard port 9100. A shared
+Raspberry Pi address with distinct ports remains available as a fallback.
 
 ## Support and limitations
 
@@ -118,8 +119,9 @@ printer setup after installing the system components. The wizard:
    confirmation when a selected profile needs it; otherwise uses the profile
    driver, suggests matching installed CUPS models, or asks for a vendor PPD.
 5. Validates the queue name and AirPrint display name, then optionally exposes
-   the queue as a raw TCP/JetDirect printer. Port 9100 is suggested first and
-   subsequent printers use 9101, 9102, and so on.
+   the queue as a raw TCP/JetDirect printer. Dedicated virtual IP mode lets
+   every printer use standard port 9100; the wizard verifies that each address
+   is private, on the Pi's connected LAN, and not currently answering ARP.
 6. When managed queues already exist, offers a separate screen to enable,
    change, or disable their standard Ethernet-printer access without recreating
    the CUPS queue or typing an `expose-raw` command.
@@ -132,11 +134,11 @@ wizard is run later, choose the existing-printer option to enable it for an
 already managed queue. The equivalent advanced command is:
 
 ```sh
-sudo airprint-server expose-raw BIXOLON-SRP-E300
+sudo airprint-server expose-raw BIXOLON-SRP-E300 --address 192.168.1.240
 ```
 
 Clients then add a Standard TCP/IP, AppSocket, or JetDirect printer using the
-Pi's LAN address and the displayed port. See
+displayed virtual IP address and port 9100. See
 [Network printers](docs/network-printers.md) for data-format and security
 requirements.
 
@@ -370,11 +372,12 @@ shellcheck install.sh uninstall.sh scripts/*.sh
 CUPS administration stays local by default. Printer sharing exposes print
 queues on the local network, so use a trusted LAN and host firewall rules.
 Raw port 9100 generally provides neither authentication nor encryption; use
-IPP/IPPS where the printer supports it. Custom PPDs and drivers execute in the
-printing pipeline and should come only from trusted vendors. State writes are
-atomic and system commands use argument arrays, but a print server still
-processes untrusted documents and should receive normal Debian security
-updates.
+IPP/IPPS where the printer supports it. Virtual printer IPs must be reserved or
+excluded from the router's DHCP pool even though setup performs an ARP duplicate
+check. Custom PPDs and drivers execute in the printing pipeline and should come
+only from trusted vendors. State writes are atomic and system commands use
+argument arrays, but a print server still processes untrusted documents and
+should receive normal Debian security updates.
 
 More detail: [Raspberry Pi](docs/raspberry-pi.md),
 [network printers](docs/network-printers.md), [USB printers](docs/usb-printers.md),

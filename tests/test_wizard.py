@@ -8,6 +8,7 @@ from airprint_server.commands import CommandResult
 from airprint_server.discovery import USBDevice, parse_lpinfo_ipp_uris
 from airprint_server.profiles import load_profiles
 from airprint_server.wizard import (
+    RawEndpointSelection,
     WizardSelection,
     collect_printer,
     find_driver_models,
@@ -214,7 +215,7 @@ def test_wizard_offers_next_available_raw_tcp_port() -> None:
             )
         }
     )
-    input_fn, _ = answers("1", "1", "", "", "y", "")
+    input_fn, _ = answers("1", "1", "", "", "y", "n", "")
 
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
@@ -239,7 +240,7 @@ def test_wizard_reuses_current_queue_raw_port_during_reconfiguration() -> None:
             )
         }
     )
-    input_fn, _ = answers("1", "1", "", "", "y", "")
+    input_fn, _ = answers("1", "1", "", "", "y", "n", "")
 
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
@@ -256,18 +257,61 @@ def test_wizard_reuses_current_queue_raw_port_during_reconfiguration() -> None:
 
 def test_wizard_can_expose_an_existing_managed_printer() -> None:
     devices = ("lpinfo", "-v")
-    runner = FakeRunner({devices: CommandResult(devices, 0, "")})
-    input_fn, _ = answers("y", "1", "", "", "4")
-    changed: list[tuple[str, int | None]] = []
+    addresses = ("ip", "-o", "-4", "address", "show", "scope", "global")
+    runner = FakeRunner(
+        {
+            devices: CommandResult(devices, 0, ""),
+            addresses: CommandResult(
+                addresses,
+                0,
+                "2: wlan0 inet 192.168.1.20/24 scope global wlan0\n",
+            ),
+        }
+    )
+    input_fn, _ = answers("y", "1", "", "", "192.168.1.240", "4")
+    changed: list[tuple[str, RawEndpointSelection]] = []
 
     run_wizard(
         runner,  # type: ignore[arg-type]
         load_profiles(),
         lambda _selection: None,
-        managed_raw_ports={"BIXOLON-SRP-E300": None},
-        set_raw_exposure=lambda name, number: changed.append((name, number)),
+        managed_raw_endpoints={"BIXOLON-SRP-E300": RawEndpointSelection()},
+        set_raw_exposure=lambda name, endpoint: changed.append((name, endpoint)),
         input_fn=input_fn,  # type: ignore[arg-type]
         output=lambda _message: None,
     )
 
-    assert changed == [("BIXOLON-SRP-E300", 9100)]
+    assert changed == [
+        (
+            "BIXOLON-SRP-E300",
+            RawEndpointSelection(9100, "192.168.1.240", "wlan0"),
+        )
+    ]
+
+
+def test_wizard_assigns_a_dedicated_virtual_ip_on_standard_port_9100() -> None:
+    devices = ("lpinfo", "-v")
+    addresses = ("ip", "-o", "-4", "address", "show", "scope", "global")
+    runner = FakeRunner(
+        {
+            devices: CommandResult(devices, 0, "direct usb://Acme/Receipt?serial=1\n"),
+            addresses: CommandResult(
+                addresses,
+                0,
+                "2: wlan0 inet 192.168.1.20/24 brd 192.168.1.255 scope global wlan0\n",
+            ),
+        }
+    )
+    input_fn, _ = answers("1", "1", "", "", "y", "", "192.168.1.240")
+
+    selection = collect_printer(
+        runner,  # type: ignore[arg-type]
+        load_profiles(),
+        input_fn=input_fn,  # type: ignore[arg-type]
+        output=lambda _message: None,
+    )
+
+    assert selection is not None
+    assert selection.raw_port == 9100
+    assert selection.raw_address == "192.168.1.240"
+    assert selection.raw_interface == "wlan0"
