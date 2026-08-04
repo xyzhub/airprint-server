@@ -268,7 +268,22 @@ def test_wizard_can_expose_an_existing_managed_printer() -> None:
             ),
         }
     )
-    input_fn, _ = answers("y", "1", "", "", "192.168.1.240", "4")
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    probe = (
+        "arping",
+        "-D",
+        "-c",
+        "2",
+        "-w",
+        "3",
+        "-I",
+        "wlan0",
+        "192.168.1.240",
+    )
+    runner.responses[show] = CommandResult(show, 0, "")
+    runner.responses[probe] = CommandResult(probe, 0)
+    input_fn, _ = answers("y", "1", "", "", "", "4")
+    messages: list[str] = []
     changed: list[tuple[str, RawEndpointSelection]] = []
 
     run_wizard(
@@ -278,7 +293,7 @@ def test_wizard_can_expose_an_existing_managed_printer() -> None:
         managed_raw_endpoints={"BIXOLON-SRP-E300": RawEndpointSelection()},
         set_raw_exposure=lambda name, endpoint: changed.append((name, endpoint)),
         input_fn=input_fn,  # type: ignore[arg-type]
-        output=lambda _message: None,
+        output=messages.append,
     )
 
     assert changed == [
@@ -287,6 +302,7 @@ def test_wizard_can_expose_an_existing_managed_printer() -> None:
             RawEndpointSelection(9100, "192.168.1.240", "wlan0"),
         )
     ]
+    assert any("Found available virtual IP 192.168.1.240" in message for message in messages)
 
 
 def test_wizard_assigns_a_dedicated_virtual_ip_on_standard_port_9100() -> None:
@@ -302,16 +318,36 @@ def test_wizard_assigns_a_dedicated_virtual_ip_on_standard_port_9100() -> None:
             ),
         }
     )
-    input_fn, _ = answers("1", "1", "", "", "y", "", "192.168.1.240")
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    probe = (
+        "arping",
+        "-D",
+        "-c",
+        "2",
+        "-w",
+        "3",
+        "-I",
+        "wlan0",
+        "192.168.1.240",
+    )
+    runner.responses[show] = CommandResult(
+        show,
+        0,
+        "2: wlan0 inet 192.168.1.20/24 scope global wlan0\n",
+    )
+    runner.responses[probe] = CommandResult(probe, 0)
+    input_fn, _ = answers("1", "1", "", "", "y", "", "")
+    messages: list[str] = []
 
     selection = collect_printer(
         runner,  # type: ignore[arg-type]
         load_profiles(),
         input_fn=input_fn,  # type: ignore[arg-type]
-        output=lambda _message: None,
+        output=messages.append,
     )
 
     assert selection is not None
     assert selection.raw_port == 9100
     assert selection.raw_address == "192.168.1.240"
     assert selection.raw_interface == "wlan0"
+    assert any("Found available virtual IP 192.168.1.240" in message for message in messages)

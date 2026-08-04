@@ -120,8 +120,9 @@ printer setup after installing the system components. The wizard:
    driver, suggests matching installed CUPS models, or asks for a vendor PPD.
 5. Validates the queue name and AirPrint display name, then optionally exposes
    the queue as a raw TCP/JetDirect printer. Dedicated virtual IP mode lets
-   every printer use standard port 9100; the wizard verifies that each address
-   is private, on the Pi's connected LAN, and not currently answering ARP.
+   every printer use standard port 9100. The wizard scans the Pi's connected
+   private LAN, proposes an available address that can be accepted by pressing
+   Enter, and verifies that it is not currently answering ARP.
 6. When managed queues already exist, offers a separate screen to enable,
    change, or disable their standard Ethernet-printer access without recreating
    the CUPS queue or typing an `expose-raw` command.

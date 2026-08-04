@@ -398,6 +398,59 @@ def _suggested_queue_name(choice: ConnectionChoice) -> str:
     return cleaned or "AirPrint-Printer"
 
 
+def _select_virtual_address(
+    runner: Runner,
+    name: str,
+    raw_address_owners: Mapping[str, str],
+    *,
+    current_address: str | None = None,
+    input_fn: Input = input,
+    output: Output = print,
+) -> tuple[str, str]:
+    occupied_addresses = {
+        address for address, owner in raw_address_owners.items() if owner != name
+    }
+    suggested: raw_proxy.VirtualAddress | None = None
+    if current_address is not None:
+        suggested = raw_proxy.VirtualAddress(
+            current_address,
+            raw_proxy.resolve_virtual_interface(runner, current_address),
+        )
+    else:
+        try:
+            suggested = raw_proxy.find_available_virtual_address(
+                runner,
+                excluded=occupied_addresses,
+            )
+        except RuntimeError as exc:
+            output(f"Automatic virtual IP discovery could not finish: {exc}")
+        else:
+            output(
+                f"Found available virtual IP {suggested.address} on {suggested.interface}."
+            )
+
+    def available_raw_address(value: str) -> str:
+        selected = virtual_ipv4(value)
+        owner = raw_address_owners.get(selected)
+        if owner and owner != name:
+            raise ValidationError(f"virtual address {selected} is assigned to {owner}")
+        return selected
+
+    selected_address = _validated(
+        "Virtual IPv4 address reserved for this printer",
+        available_raw_address,
+        default=suggested.address if suggested is not None else None,
+        input_fn=input_fn,
+        output=output,
+    )
+    selected_interface = (
+        suggested.interface
+        if suggested is not None and selected_address == suggested.address
+        else raw_proxy.resolve_virtual_interface(runner, selected_address)
+    )
+    return selected_address, selected_interface
+
+
 def collect_printer(
     runner: Runner,
     profiles: dict[str, PrinterProfile],
@@ -460,21 +513,14 @@ def collect_printer(
             default=True,
             input_fn=input_fn,
         ):
-            def available_raw_address(value: str) -> str:
-                selected = virtual_ipv4(value)
-                owner = (raw_address_owners or {}).get(selected)
-                if owner and owner != name:
-                    raise ValidationError(f"virtual address {selected} is assigned to {owner}")
-                return selected
-
-            raw_address = _validated(
-                "Unused private IPv4 address reserved for this printer",
-                available_raw_address,
-                default=current_address,
+            raw_address, raw_interface = _select_virtual_address(
+                runner,
+                name,
+                raw_address_owners or {},
+                current_address=current_address,
                 input_fn=input_fn,
                 output=output,
             )
-            raw_interface = raw_proxy.resolve_virtual_interface(runner, raw_address)
             raw_port = raw_proxy.DEFAULT_RAW_PORT
             output(
                 f"The Pi will manage {raw_address}/32 on {raw_interface} for this printer."
@@ -564,27 +610,19 @@ def configure_existing_raw_exposure(
         default=True,
         input_fn=input_fn,
     ):
-        occupied_addresses = {
+        address_owners = {
             endpoint.address: queue
             for queue, endpoint in managed_raw_endpoints.items()
-            if queue != name and endpoint.address is not None
+            if endpoint.address is not None
         }
-
-        def available_raw_address(value: str) -> str:
-            selected = virtual_ipv4(value)
-            owner = occupied_addresses.get(selected)
-            if owner:
-                raise ValidationError(f"virtual address {selected} is assigned to {owner}")
-            return selected
-
-        selected_address = _validated(
-            "Unused private IPv4 address reserved for this printer",
-            available_raw_address,
-            default=current.address,
+        selected_address, selected_interface = _select_virtual_address(
+            runner,
+            name,
+            address_owners,
+            current_address=current.address,
             input_fn=input_fn,
             output=output,
         )
-        selected_interface = raw_proxy.resolve_virtual_interface(runner, selected_address)
         set_raw_exposure(
             name,
             RawEndpointSelection(

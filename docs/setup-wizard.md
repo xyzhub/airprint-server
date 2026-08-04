@@ -44,11 +44,12 @@ The operator can instead enter an installed model URI or a trusted vendor
 Finally, the wizard validates the queue name and AirPrint display name. It then
 asks whether to expose the queue as a raw TCP/JetDirect network printer. The
 recommended mode gives each printer a dedicated private virtual IPv4 address,
-so every printer can use standard port 9100. Enter an unused address from the
-Pi's current LAN and reserve or exclude it from the router's DHCP pool. The
-wizard identifies the connected interface and performs ARP duplicate detection
-before applying it. Raw exposure remains opt-in because the protocol is
-unauthenticated.
+so every printer can use standard port 9100. The wizard scans the Pi's connected
+LAN, skips addresses already assigned to managed queues, checks candidates with
+ARP duplicate detection, and proposes an available address. Press Enter to
+accept it or type a different private address. Reserve or exclude the selected
+address from the router's DHCP pool. Raw exposure remains opt-in because the
+protocol is unauthenticated.
 
 The fallback mode uses the Pi's primary address. Because one address cannot map
 two queues to the same TCP port, fallback queues use 9100, 9101, 9102, and so
@@ -56,10 +57,11 @@ on.
 
 If printers are already managed, the wizard first offers to configure standard
 Ethernet-printer access for one of them. Select the queue, accept raw
-TCP/JetDirect exposure, choose dedicated virtual IP mode, and enter the reserved
-address. This updates only the network exposure; it does not recreate the CUPS
-queue. If an older or interrupted installation is missing either gateway
-service, the wizard repairs the managed services automatically.
+TCP/JetDirect exposure, choose dedicated virtual IP mode, and press Enter to
+accept the automatically discovered address. This updates only the network
+exposure; it does not recreate the CUPS queue. If an older or interrupted
+installation is missing either gateway service, the wizard repairs the managed
+services automatically.
 
 The result passes through the same managed-queue confirmation used by
 `add-printer`. It never creates or changes a queue that the operator does not

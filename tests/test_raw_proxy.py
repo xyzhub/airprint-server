@@ -17,6 +17,7 @@ from airprint_server.raw_proxy import (
     apply_virtual_addresses,
     client_address_allowed,
     configured_routes,
+    find_available_virtual_address,
     install_service,
     load_routes,
     next_available_port,
@@ -182,6 +183,111 @@ def test_resolves_virtual_address_to_connected_lan_interface() -> None:
     )
 
     assert resolve_virtual_interface(runner, "192.168.1.240") == "wlan0"  # type: ignore[arg-type]
+
+
+def test_finds_an_available_virtual_address_on_the_connected_lan() -> None:
+    addresses = ("ip", "-o", "-4", "address", "show", "scope", "global")
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    first_probe = (
+        "arping",
+        "-D",
+        "-c",
+        "2",
+        "-w",
+        "3",
+        "-I",
+        "wlan0",
+        "192.168.1.240",
+    )
+    second_probe = (*first_probe[:-1], "192.168.1.241")
+    runner = FakeRunner(
+        {
+            addresses: CommandResult(
+                addresses,
+                0,
+                "2: wlan0 inet 192.168.1.20/24 brd 192.168.1.255 scope global wlan0\n",
+            ),
+            show: CommandResult(
+                show,
+                0,
+                "2: wlan0 inet 192.168.1.20/24 scope global wlan0\n",
+            ),
+            first_probe: CommandResult(first_probe, 1, "", "duplicate detected"),
+            second_probe: CommandResult(second_probe, 0),
+        }
+    )
+
+    selected = find_available_virtual_address(runner)  # type: ignore[arg-type]
+
+    assert selected == raw_proxy.VirtualAddress("192.168.1.241", "wlan0")
+    assert first_probe in runner.calls
+    assert second_probe in runner.calls
+
+
+def test_available_virtual_address_skips_addresses_managed_by_another_queue() -> None:
+    addresses = ("ip", "-o", "-4", "address", "show", "scope", "global")
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    probe = (
+        "arping",
+        "-D",
+        "-c",
+        "2",
+        "-w",
+        "3",
+        "-I",
+        "wlan0",
+        "192.168.1.241",
+    )
+    runner = FakeRunner(
+        {
+            addresses: CommandResult(
+                addresses,
+                0,
+                "2: wlan0 inet 192.168.1.20/24 scope global wlan0\n",
+            ),
+            show: CommandResult(show, 0, "2: wlan0 inet 192.168.1.20/24 scope global\n"),
+            probe: CommandResult(probe, 0),
+        }
+    )
+
+    selected = find_available_virtual_address(  # type: ignore[arg-type]
+        runner,
+        excluded={"192.168.1.240"},
+    )
+
+    assert selected.address == "192.168.1.241"
+    assert not any(call[-1] == "192.168.1.240" for call in runner.calls if call[0] == "arping")
+
+
+def test_available_virtual_address_avoids_dot_zero_and_dot_255_on_wide_subnets() -> None:
+    addresses = ("ip", "-o", "-4", "address", "show", "scope", "global")
+    show = ("ip", "-o", "-4", "address", "show", "dev", "wlan0")
+    responses = {
+        addresses: CommandResult(
+            addresses,
+            0,
+            "2: wlan0 inet 10.20.30.20/16 scope global wlan0\n",
+        ),
+        show: CommandResult(show, 0, "2: wlan0 inet 10.20.30.20/16 scope global\n"),
+    }
+    for suffix in range(240, 255):
+        probe = (
+            "arping",
+            "-D",
+            "-c",
+            "2",
+            "-w",
+            "3",
+            "-I",
+            "wlan0",
+            f"10.20.30.{suffix}",
+        )
+        responses[probe] = CommandResult(probe, 1, "", "duplicate detected")
+    runner = FakeRunner(responses)
+
+    selected = find_available_virtual_address(runner)  # type: ignore[arg-type]
+
+    assert selected.address == "10.20.30.239"
 
 
 def test_reconciles_only_tracked_virtual_addresses(tmp_path: Path) -> None:

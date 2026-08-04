@@ -35,11 +35,13 @@ private virtual IPv4 address, allowing all printers to use standard port 9100.
 For example, one Pi can expose `192.168.1.240:9100` for receipts and
 `192.168.1.241:9100` for labels.
 
-Choose addresses from the Pi's current private LAN, then reserve them or remove
-them from the router's DHCP pool. Setup verifies the connected interface and
-uses ARP duplicate-address detection, but that cannot prevent a future DHCP
-lease collision if the addresses are left in the pool. The aliases are restored
-automatically at boot and removed when their exposure is disabled.
+The setup wizard automatically scans the Pi's connected private LAN and proposes
+an address for each printer. Press Enter to accept the proposal or type another
+address. Reserve the selected addresses or remove them from the router's DHCP
+pool. Setup verifies the connected interface and uses ARP duplicate-address
+detection, but that cannot prevent a future DHCP lease collision if the
+addresses are left in the pool. The aliases are restored automatically at boot
+and removed when their exposure is disabled.
 
 For an existing managed queue, the equivalent explicit command is:
 

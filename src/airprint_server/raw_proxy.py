@@ -11,7 +11,7 @@ import socketserver
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -134,6 +134,12 @@ class VirtualAddress:
     interface: str
 
 
+@dataclass(frozen=True)
+class ConnectedLan:
+    interface: str
+    address: ipaddress.IPv4Interface
+
+
 def client_address_allowed(value: str) -> bool:
     """Allow loopback, link-local, and private IPv4 clients only."""
     try:
@@ -240,13 +246,12 @@ def load_routes(path: Path = RAW_PROXY_CONFIG_PATH) -> list[RawRoute]:
     return sorted(routes, key=lambda route: (route.address, route.port, route.queue))
 
 
-def resolve_virtual_interface(runner: Runner, address: str) -> str:
-    target = ipaddress.ip_address(virtual_ipv4(address))
+def _connected_private_lans(runner: Runner) -> list[ConnectedLan]:
     result = runner.run(
         ["ip", "-o", "-4", "address", "show", "scope", "global"],
         check=False,
     )
-    candidates: list[tuple[int, str]] = []
+    connected: list[ConnectedLan] = []
     if not result.returncode:
         for line in result.stdout.splitlines():
             fields = line.split()
@@ -261,23 +266,77 @@ def resolve_virtual_interface(runner: Runner, address: str) -> str:
                 local = ipaddress.ip_interface(fields[inet_index + 1])
             except (ValidationError, ValueError):
                 continue
-            reserved = {
-                local.ip,
-                local.network.network_address,
-                local.network.broadcast_address,
-            }
-            if (
-                target in local.network
-                and target not in reserved
-                and local.network.prefixlen < 32
-            ):
-                candidates.append((local.network.prefixlen, checked_interface))
+            if not isinstance(local, ipaddress.IPv4Interface):
+                continue
+            try:
+                virtual_ipv4(str(local.ip))
+            except ValidationError:
+                continue
+            connected.append(ConnectedLan(checked_interface, local))
+    return connected
+
+
+def resolve_virtual_interface(runner: Runner, address: str) -> str:
+    target = ipaddress.ip_address(virtual_ipv4(address))
+    candidates: list[tuple[int, str]] = []
+    for lan in _connected_private_lans(runner):
+        local = lan.address
+        reserved = {
+            local.ip,
+            local.network.network_address,
+            local.network.broadcast_address,
+        }
+        if target in local.network and target not in reserved and local.network.prefixlen < 32:
+            candidates.append((local.network.prefixlen, lan.interface))
     if not candidates:
         raise ValidationError(
             f"{address} is not on a connected private IPv4 LAN; choose an unused address "
             "from the Pi's current subnet"
         )
     return max(candidates, key=lambda item: (item[0], item[1]))[1]
+
+
+def _virtual_address_candidates(local: ipaddress.IPv4Interface) -> Iterator[str]:
+    local_block = int(local.ip) & ~0xFF
+    first = max(int(local.network.network_address) + 1, local_block + 1)
+    last = min(int(local.network.broadcast_address) - 1, local_block + 254)
+    if first > last:
+        return
+    preferred = local_block + 240
+    if not first <= preferred <= last:
+        preferred = max(first, last - 14)
+    for candidates in (range(preferred, last + 1), range(preferred - 1, first - 1, -1)):
+        for candidate in candidates:
+            yield str(ipaddress.IPv4Address(candidate))
+
+
+def find_available_virtual_address(
+    runner: Runner,
+    *,
+    excluded: set[str] | None = None,
+    max_probes_per_lan: int = 32,
+) -> VirtualAddress:
+    """Find an unused high address on a connected private IPv4 LAN."""
+    blocked = set(excluded or ())
+    for lan in _connected_private_lans(runner):
+        if lan.address.network.prefixlen >= 31:
+            continue
+        probes = 0
+        for candidate in _virtual_address_candidates(lan.address):
+            if candidate == str(lan.address.ip) or candidate in blocked:
+                continue
+            probes += 1
+            if probes > max_probes_per_lan:
+                break
+            try:
+                validate_virtual_address_available(runner, candidate, lan.interface)
+            except RuntimeError:
+                continue
+            return VirtualAddress(candidate, lan.interface)
+    raise RuntimeError(
+        "could not find an available virtual printer IP on a connected private LAN; "
+        "reserve an unused address in the router and enter it manually"
+    )
 
 
 def virtual_addresses(routes: list[RawRoute]) -> list[VirtualAddress]:
